@@ -116,23 +116,6 @@ or drop a file on the window, or press F3.
 The game fps in the overlay is counted at the display: a new frame is a write
 window that starts higher up the screen than the one before it.
 
-## Test ROMs
-
-`roms/` holds builds of every CHGame program at hand, made by
-`tools/build_roms.sh` with the Arduino IDE 2's own arduino-cli and settings:
-
-| | |
-|---|---|
-| `roms/bateske/` | Kevin Bates' CHGame programs: CHBlackjack, NewBlocksColor, CH32Doom, CHSpriteView, CHMultiSprite, CHStlView, CHSDtoUSB (the last four want a microSD card) |
-| `roms/chgfx/` | the CHGfx library's examples |
-| `roms/poevoid/` | CHGame-Ponglike |
-| `roms/joyrider3774/` | the `*_embedded` games, one ROM per CHGame target in each game's `tools/build_releases.py` |
-
-The sources are cloned next to this repository (`c:/github/<repo>`); each is
-built with the optimisation its README asks for. FileBrowser is not built: it
-needs an SD library that supports this board. The games remain their authors'
-own, under their own licences.
-
 ## Tools
 
 * `chg_headless game.bin [seconds] [out.ppm] [--press btn@sec[:dur]]... [--save]`
