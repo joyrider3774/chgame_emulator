@@ -1,0 +1,216 @@
+# CLAUDE.md
+
+Working notes for continuing this repository with Claude (or by hand). The
+README describes the emulator for users; this file covers how to work on it:
+setup, verification, the hardware calibration loop, design decisions and the
+traps already fallen into.
+
+## What this is
+
+A real emulator (not a simulator) for Kevin Bates' **CHGame** handheld:
+WCH CH32X035G8U6 (QingKe V4C RISC-V, RV32IMAC + WCH "XW" extension, 48 MHz,
+62 KB flash, 20 KB SRAM), ST7735S 128x128 on SPI1, 8 buttons, piezo on PB10,
+LED on PB9, microSD (not emulated). It executes the compiled Arduino `.bin`
+exactly as the device does, booting through the real bootloader. C11 + SDL3,
+native and Emscripten from the same source.
+
+**The owner's priorities, in order:** emulator speed, then screen, CPU timing
+and buzzer accuracy. High-level shortcuts that simulate an API instead of the
+hardware are not wanted: model the hardware. The SD card is deliberately out of scope for now.
+
+Modelled on the owner's earlier TinyJoypad emulator
+(`c:/github/Tinyjoypad_Emulator`, simavr + SDL3), but the CPU here is our own.
+
+## Layout
+
+| Path | What |
+|---|---|
+| `src/machine.h` | the whole machine as one struct (`ChgMachine`): CPU, PFIC, SysTick, GPIO, SPI, DMA, timers, flash controller, buzzer log, LCD. Pin map in the header comment |
+| `src/rv32.c` | CPU: decoder (incl. XW), predecoded instruction cache, execution loop, traps/PFIC/HPE, **cycle model** (see top comment) |
+| `src/bus.c` | memory map and all peripherals; everything lazily evaluated from cycle timestamps |
+| `src/machine.c` | reset and `chg_run()` scheduler loop |
+| `src/st7735.c` | display controller + panel mapping |
+| `src/audio.c` | buzzer pin integrated exactly per audio sample |
+| `src/loader.c` | `.bin`/`.hex`/`.elf`, bootloader install + metadata page, `.sav` files |
+| `src/bootloader_image.c` | the real CHGame bootloader (MIT), generated from the board package `.bin` — do not edit |
+| `src/main.c` | SDL3 front end using SDL main callbacks (works under Emscripten unchanged) |
+| `web/shell.html` | page around the web build: file picker, URL box, `?rom=`, `games.json` menu |
+| `tools/headless.c` | `chg_headless`: run without a window, report speed, dump screen/RAM/registers |
+| `tools/build_roms.sh` | builds every known CHGame program into `roms/` (gitignored) |
+| `tools/make_web.sh` | Emscripten build + roms + games.json, `serve` to host with Python |
+| `tests/xw_test.c`, `tests/xw_golden.txt` | XW decoder vs WCH's own assembler output |
+| `tests/sketches/chg_cal/` | **the calibration sketch** the cycle model is fitted to (51 asm loops) |
+| `tests/sketches/chg_bench/` | quick 9-loop timing check shown on the LCD (`chg_bench.bin` prebuilt) |
+| `tests/sketches/chg_flashtest/` | flash page write / save persistence check |
+
+## Environment (the owner's Windows machine)
+
+- Shell: Git Bash (POSIX) and PowerShell are both available. MSYS2 mingw64
+  toolchain: gcc 16, cmake 4.4, ninja, **SDL3 installed** (static lib used).
+- Emscripten SDK: `c:/github/emsdk` (6.0.4; SDL3 via `-sUSE_SDL=3`). Its Node:
+  `c:/github/emsdk/node/22.16.0_64bit/bin/node.exe`, its Python likewise.
+- Arduino IDE 2 at `c:/arduino2`; its CLI:
+  `c:/arduino2/resources/app/lib/backend/resources/arduino-cli.exe`.
+  **Always pass `--config-file ~/.arduinoIDE/arduino-cli.yaml`** — the bare
+  CLI does not know the IDE's sketchbook (`OneDrive/Documenten/Arduino`,
+  which holds the CHGfx library).
+- CHGame board package: `~/AppData/Local/Arduino15/packages/CHGame/` (0.2.2),
+  FQBN `CHGame:ch32v:CHGame` with menus `opt=osstd|o2std|...`, `periph=game|full`.
+  Toolchain `riscv-none-embed-gcc 8.2.0` in `tools/` there (objdump needs
+  `-M xw` to disassemble XW instructions).
+- Uploader: `.../tools/chgame-upload/0.1.0/chgame-upload.exe -port COM6 flash <bin> -run`.
+- **A real CHGame is normally attached on COM6** and the owner has allowed
+  flashing it for tests. Leave a game on it or tell the owner what's on it.
+- Chrome (not Edge) is installed; Puppeteer (`puppeteer-core`) with emsdk's
+  Node drives it for web tests.
+- Game sources: only `c:/github/*_embedded` are the owner's CHGame games
+  (don't grep all of `c:/github` — hundreds of unrelated repos). Others cloned
+  next to this repo: bateske's `CHBlackjack NewBlocksColor CH32Doom CHSpriteView
+  CHMultiSprite CHStlView CHSDtoUSB FileBrowser CHGfx CH32SerialBoot`, and
+  `CHGame-Ponglike` (poevoid).
+
+## Build and verify
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build
+./build/xw_test.exe tests/xw_golden.txt            # must say 0 wrong
+tools/build_roms.sh 4                              # roms/ (needs the clones above)
+tools/make_web.sh serve                            # web build on :8000
+```
+
+Headless runner (use it for every change; the GUI can't be seen from a session):
+
+```sh
+./build/chg_headless.exe game.bin 12 out.ppm --press a@4 --press start@6:0.2 --shots prefix --save
+./build/chg_headless.exe game.bin 3 NUL --mem 200009b8 51      # dump RAM words
+CHG_REGS=1 ./build/chg_headless.exe game.bin 4 NUL             # dump registers at the end
+./build/chg_headless.exe game.bin 5 NUL --no-bootloader        # start at 0x3000
+```
+
+It prints speed (x real time), a game fps estimate, guest MIPS/CPI, the PC and
+any CPU fault. Convert `.ppm` with PIL to look at it. Symbol addresses for
+`--mem`/PC lookups come from the ELF in `build/roms/<group>/<name>/` via
+`riscv-none-embed-nm`/`addr2line`.
+
+**Regression check after any CPU/peripheral change** — all three must hold:
+1. `xw_test`: 193 encodings, 0 wrong.
+2. Calibration: build `tests/sketches/chg_cal`, run it headless with
+   `--no-bootloader --mem <cal_results> 51`, compare with the hardware numbers
+   (see below) — mean abs error was 0.03%, every case within 0.5%.
+3. Every ROM in `roms/` for ~15 s with some button presses: no `FAULT`.
+
+## The cycle model (don't change constants by guessing)
+
+Fitted to hardware measurements, documented at the top of `src/rv32.c`:
+flash code is fetch bound (a prefetcher reads a 32-bit word every 4 cycles,
+depth 2); SRAM code fetches a word a cycle but shares the single SRAM port with
+data (load 1 port cycle, store 2, back-to-back stores pair 2+1); loads/stores 2
+core cycles; mul 1; divide runs in the background for 10 cycles; taken branch
+restarts fetch after the in-flight word; a RAM load/store in the two
+instructions before a taken branch hides the branch bubble; flash load from RAM
+code costs 4 5/8 cycles (eighths are carried in `frac8`). Peripheral accesses
+cost the same as RAM.
+
+To re-measure: compile `tests/sketches/chg_cal`, flash it to COM6, open the
+port with DTR on and read lines `name value` between `BEGIN`/`END`
+(PowerShell `System.IO.Ports.SerialPort`, `DtrEnable=$true`). Values are
+cycles per loop iteration x100. `cal_results[]` address from `nm`.
+Hardware results of the last run (2026-09-30) — the reference:
+`f_add32_8 4409, r_add32_8 1103, f_add32_24 10821, r_add32_24 2706,
+f_add16_16 4008, r_add16_16 1905, f_add16_48 10420, r_add16_48 5110,
+f_add32_8_mis 4811, r_add32_8_mis 1203, f_lw8 4410, r_lw8 1804, f_lw8_flash 7615,
+r_lw8_flash 4008, f_lw8_per 4409, r_lw8_per 1805, f_lhu8 4409, r_lhu8 1805,
+r_lhu8_flash 4008, f_sw8 4409, r_sw8 2205, f_sw8_per 4409, r_sw8_per 1905,
+f_sb8 4410, r_sb8 2205, f_lwuse8 7615, r_lwuse8 2706, f_lwalu8 7615, r_lwalu8 2706,
+f_divbig8 8016, r_divbig8 8015, f_divsmall8 8016, r_divsmall8 8016, f_mul8 4409,
+r_mul8 1103, f_btaken8 7615, r_btaken8 1905, f_bnot8 4409, r_bnot8 1104,
+f_jal8 7615, r_jal8 1905, r_swalu8 3508, r_swalu8_per 2706, r_sw2alu2 3107,
+r_sw1alu7 1304, r_lw2alu2 2706, r_lw4 1003, r_lw1alu7 1203, r_mis16 1203,
+r_swap_al 71731, r_swap_mis 77842`.
+`chg_bench` on hardware: 16539 11009 11311 50095 16703 5017 5015 4280 99338 (us).
+
+When adding a calibration loop, check the layout in the disassembly: under
+`.option norvc` a `.balign 4` that needs a 2-byte pad is silently skipped (use
+the `ALIGN4` macro in `bench.S`), and use `.option norelax`.
+
+## Design decisions worth keeping
+
+- **Speed first.** Predecoded `ChgInsn` cache per halfword for flash and RAM;
+  RAM stores invalidate overlapping entries (games run hot loops from `.data`);
+  flash entries are dropped when the flash controller writes a page.
+  Peripherals are never ticked: each keeps a timestamp and computes its state
+  when touched; `chg_schedule()` finds the next event (SysTick match, timer
+  update, DMA completion with an interrupt). Any register write that could
+  change interrupts calls `chg_kick()` to end the CPU slice. ~20-25x real time
+  natively, ~8-13x in the browser. Keep the hot loop in `cpu_exec` lean.
+- **Audio is the master clock** in the front end: each frame runs exactly the
+  cycles the audio queue needs (`src/main.c emulate()`).
+- **Boot like the device**: the real bootloader at 0x0000, the metadata page at
+  0xF700 (magic "CHGM", version 1, length, CRC-32 ISO-HDLC over the app) written
+  by the loader. This mattered: games read/jump into low flash (Ponglike prints
+  from a NULL pointer; the bootloader's cleanup is part of the app's start).
+- **QingKe specifics that games depend on**: `mtvec` mode 3 (vectored, table of
+  absolute addresses); PFIC priorities and nesting (INTSYSCR 0x804 bit 1);
+  **HPE** saves x1,x5-7,x10-17,x28-31 in the core on trap entry and mret
+  restores them (`WCH-Interrupt-fast` handlers rely on it); **on nested traps
+  the core also keeps mepc/mcause/mstatus per level** — without that CHGfx's
+  DMA interrupt preempting SysTick corrupted CHBlackjack's stack. CSR 0x800
+  aliases mstatus MIE/MPIE. With nesting on, MIE is not cleared on interrupt
+  entry (the core's SysTick handler disables it itself).
+- **XW instructions** (WCH's compressed byte/halfword forms): c.lbu/c.sb in
+  quadrant 0 funct3 001/101, c.lhu/c.sh in quadrant 2 funct3 001/101, sp-relative
+  forms in quadrant 0 funct3 100 with the sub-op in bits 6:5. Offsets decoded in
+  `decode16()`; golden file generated by assembling every offset.
+- **ST7735**: frame memory 132x162; the glass shows the block reached with
+  MADCTL 0xC8 at column 2, row 3 (screen (x,y) = GRAM(129-x, 158-y)). MADCTL
+  BGR set = correct colours on this BGR panel. 12/16/18-bit COLMOD.
+- **Buzzer**: PB10 as GPIO or TIM1 CH2 PWM (AFIO PCFR1 bits 17:15 = 1). State
+  changes are logged with timestamps; `audio.c` integrates in closed form.
+- **Saves**: flash pages the program writes go to `<rom>.sav`
+  (4-byte address + 256 bytes, repeated); IndexedDB `/saves` on the web.
+- **USB** is a dumb register block: the core's CDC code runs, nothing
+  enumerates, `Serial` output is dropped (as on a board with no PC).
+- The game-fps number is a heuristic (a RAMWR window starting above the last
+  one = new frame). It misreads some games (CH32Doom). Improve, don't trust.
+
+## Board/package facts that matter
+
+- App region 0x3000..0xF6FF (50944 bytes), metadata page 0xF700, 62 KB user
+  flash, RAM 0x20000000 (first 16 bytes: boot-request block surviving warm reset).
+- Flash alias at 0x08000000 (flash programming writes there). Erased = 0xFF.
+- GPIOB CFGHR is write-only on the chip; the core keeps a RAM shadow
+  (`CFGHR_tmpB`). Emulated reads return the written value.
+- The owner's games' `tools/build_releases.py` list CHGame targets with defines
+  (level packs); `build_roms.sh` parses them and passes the defines through
+  `--build-property compiler.c(pp).extra_flags=...`. Puzzleland only fits that way.
+- FileBrowser needs an Arduino SD library that supports this core — not built.
+- Parallel arduino-cli builds occasionally fail silently (shared library
+  folder on OneDrive); `build_roms.sh` retries once.
+
+## Working conventions and traps
+
+- Code style: C11, 4-space indent, explanatory block comments about *why*
+  (hardware behaviour, measurements). Match it.
+- Edit C sources with the editor tools, not Python/heredoc string replacement:
+  heredoc-embedded Python turned `\n` inside C string literals into real
+  newlines twice in this project.
+- Use the scratchpad for temporary files; don't write test output into the
+  repo (a stray `NUL` file and a `--save` PPM appeared once from bad paths).
+- The GUI can't be observed from a session: verify with `chg_headless` +
+  screenshots, and the web build with Puppeteer (script pattern: launch Chrome
+  with its own profile, `?rom=roms/...`, keyboard to `#canvas`, F9 for stats,
+  screenshot, collect console/page errors). `--virtual-time-budget` screenshots
+  never finish because the main loop never idles.
+- The owner is joyrider3774. Licence MIT (`LICENSE`); the embedded bootloader is
+  MIT (Kevin Bates). Commit/push only when asked.
+
+## Open items (as of 2026-09-30)
+
+- Better game-fps measurement.
+- NewBlocksColor runs at ~8x real time vs ~25x for most: profile why (timer
+  interrupts for music? RAM code invalidation?).
+- DMA start latency: chg_bench test 3 is 0.9% fast vs hardware.
+- USB CDC host emulation, so `Serial` output (e.g. `CHGAME_TIMING` frame
+  reports) becomes visible.
+- microSD card emulation (image file on SPI with PB11 CS) when the owner wants it.
+- Settings persistence (volume, window size) like the TinyJoypad emulator.
