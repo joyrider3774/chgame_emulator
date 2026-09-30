@@ -175,4 +175,6 @@ saves: green is a pass, and a white bar is added per run.
 
 ## Licence
 
-To be decided by the author.
+MIT, see `LICENSE`. The embedded CHGame bootloader (`src/bootloader_image.c`)
+is Kevin Bates' CH32SerialBoot, also MIT, with its notice in that file. SDL3
+is Zlib licensed.
