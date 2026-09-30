@@ -1,0 +1,9 @@
+build/
+build_*/
+*.sav
+*.bmp
+*.ppm
+/roms
+/.vscode
+/build
+/build_web

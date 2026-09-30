@@ -1,0 +1,95 @@
+#!/bin/sh
+# Builds the test ROMs in roms/ from their sources in c:/github with the
+# arduino-cli that ships with Arduino IDE 2, using the IDE's own settings
+# (~/.arduinoIDE/arduino-cli.yaml), so the board package and the libraries
+# (CHGfx in the sketchbook) are exactly the ones the IDE builds with.
+#
+#   roms/bateske/        Kevin Bates' CHGame games and tools
+#   roms/chgfx/          the CHGfx library's examples
+#   roms/poevoid/        poevoid's CHGame-Ponglike
+#   roms/joyrider3774/   the *_embedded games, every CHGame target their
+#                        tools/build_releases.py lists, with its defines
+#
+# Each project is built with the board settings its README asks for.
+# Usage: tools/build_roms.sh [jobs]      (default 4 builds at once)
+
+GITHUB=${GITHUB:-/c/github}
+CLI=${ARDUINO_CLI:-/c/arduino2/resources/app/lib/backend/resources/arduino-cli.exe}
+CONFIG=${ARDUINO_CONFIG:-$HOME/.arduinoIDE/arduino-cli.yaml}
+HERE=$(cd "$(dirname "$0")/.." && pwd)
+OUT="$HERE/roms"
+WORK="$HERE/build/roms"
+JOBS=${1:-4}
+BOARD=CHGame:ch32v:CHGame
+
+winpath() { cygpath -w "$1" 2>/dev/null || echo "$1"; }
+
+mkdir -p "$OUT" "$WORK"
+
+# group|name|sketch folder|board options|defines
+{
+    # README: keep the defaults, it only fits at -Os with Peripherals: Game
+    echo "bateske|CHBlackjack|$GITHUB/CHBlackjack|opt=osstd,periph=game|"
+    echo "bateske|NewBlocksColor|$GITHUB/NewBlocksColor|opt=o2std|"
+    echo "bateske|CHStlView|$GITHUB/CHStlView|opt=o2std|"
+    echo "bateske|CHMultiSprite|$GITHUB/CHMultiSprite|opt=o2std|"
+    echo "bateske|CHSpriteView|$GITHUB/CHSpriteView|opt=o2std|"
+    echo "bateske|CH32Doom|$GITHUB/CH32Doom|opt=osstd|"
+    echo "bateske|FileBrowser|$GITHUB/FileBrowser|opt=osstd|"
+    echo "bateske|CHSDtoUSB|$GITHUB/CHSDtoUSB|opt=osstd|"
+    echo "poevoid|CHGame-Ponglike|$GITHUB/CHGame-Ponglike|opt=osstd|"
+    for ex in "$GITHUB"/CHGfx/examples/*/; do
+        echo "chgfx|$(basename "$ex")|$ex|opt=o2std|"
+    done
+    # the CHGame targets of each game's own release script, with their defines
+    for g in "$GITHUB"/*_embedded; do
+        python - "$g" <<'PY'
+import os, re, sys
+g = sys.argv[1]
+name = os.path.basename(g)[:-len("_embedded")]
+script = os.path.join(g, "tools", "build_releases.py")
+targets = []
+if os.path.exists(script):
+    for line in open(script, encoding="utf-8"):
+        m = re.match(r'\s*\("CHGame",\s*"([^"]*)",\s*(\{.*?\})\s*\)', line)
+        if m:
+            targets.append((m.group(1), eval(m.group(2), {"__builtins__": {}})))
+if not targets:
+    targets = [("", {})]
+for suffix, defines in targets:
+    flags = " ".join("-D%s=%s" % (k, v) for k, v in defines.items())
+    print("joyrider3774|%s%s|%s|periph=game|%s" % (name, suffix, os.path.join(g, "source", os.path.basename(g)), flags))
+PY
+    done
+} > "$WORK/list.txt"
+
+build_one() {
+    IFS='|' read -r group name sketch opts defines <<EOF
+$1
+EOF
+    bp="$WORK/$group/$name"
+    log="$bp.log"
+    mkdir -p "$bp" "$OUT/$group"
+    set -- --config-file "$(winpath "$CONFIG")" compile --fqbn "$BOARD:$opts" --build-path "$(winpath "$bp")"
+    if [ -n "$defines" ]; then
+        set -- "$@" --build-property "compiler.c.extra_flags=$defines" --build-property "compiler.cpp.extra_flags=$defines"
+    fi
+    # parallel builds reading the same library folder now and then fail
+    # without an error message, so a failed build gets one more go
+    if "$CLI" "$@" "$sketch" > "$log" 2>&1 || "$CLI" "$@" "$sketch" > "$log" 2>&1; then
+        bin=$(ls "$bp"/*.ino.bin 2>/dev/null | head -1)
+        cp "$bin" "$OUT/$group/$name.bin"
+        size=$(grep -o "Sketch uses [0-9]* bytes" "$log" | grep -o "[0-9]*")
+        echo "ok      $group/$name.bin  ($size bytes)"
+    else
+        echo "FAILED  $group/$name  - $(grep -iE "error|overflow" "$log" | head -1 | cut -c1-150)"
+    fi
+}
+export CLI CONFIG GITHUB WORK OUT BOARD
+
+# arduino-cli does not like several instances filling its caches at once on
+# a first run, so one build goes first and the rest follow in parallel
+first=$(head -1 "$WORK/list.txt")
+build_one "$first"
+tail -n +2 "$WORK/list.txt" | tr '\n' '\0' |
+    xargs -0 -P "$JOBS" -I{} sh -c "$(declare -f winpath build_one); build_one \"\$1\"" _ {}

@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CHGame Emulator</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #18181c; color: #ddd; font: 14px system-ui, sans-serif;
+         display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+  header { padding: 12px 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+           justify-content: center; max-width: 100%; box-sizing: border-box; }
+  canvas { display: block; width: min(512px, calc(100vw - 32px)); aspect-ratio: 512 / 536;
+           image-rendering: pixelated; outline: none; background: #000; }
+  button, label.button, select, input[type=url] {
+    background: #3a3a44; color: #ddd; border: 0; padding: 6px 10px; border-radius: 4px; font: inherit; }
+  button, label.button { cursor: pointer; }
+  button:hover, label.button:hover { background: #4a4a56; }
+  input[type=url] { width: min(260px, 60vw); }
+  input[type=file] { display: none; }
+  #status { color: #999; min-height: 1.2em; }
+  p.keys { color: #888; max-width: 512px; padding: 0 16px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <strong>CHGame Emulator</strong>
+  <label class="button">Open file…<input id="file" type="file" accept=".bin,.hex,.elf"></label>
+  <select id="games" hidden><option value="">Games…</option></select>
+  <input id="url" type="url" placeholder="or a URL to a .bin / .hex / .elf">
+  <button id="load">Load</button>
+</header>
+<div id="status">Loading…</div>
+<canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+<p class="keys">Arrows: d-pad · X / Z: A / B · Enter / Right Shift: START / SELECT ·
+  P: pause · hold Tab: fast forward · F2: reset · F9: stats · F1: help</p>
+<p class="keys">Programs load from a file on this computer, from a URL, or with
+  <code>?rom=name.bin</code> from the folder the emulator is in
+  (<code>?rom=https://…</code> works for any address that allows it).
+  A <code>games.json</code> beside the page — a list of file names — fills the Games menu.</p>
+<script>
+  var statusEl = document.getElementById('status');
+  var ready = false, pending = null;
+
+  function setStatus(t) { statusEl.textContent = t; }
+
+  // Hands a program to the emulator once it and the saves are ready
+  function start(name, bytes) {
+    if (!ready) { pending = [name, bytes]; return; }
+    try { FS.mkdir('/roms'); } catch (e) {}
+    var path = '/roms/' + name.replace(/[\/\\?#]/g, '_');
+    FS.writeFile(path, bytes);
+    if (Module.ccall('chg_web_load', 'number', ['string'], [path])) setStatus(name);
+    else setStatus('Could not load ' + name);
+    Module.canvas.focus();
+  }
+
+  // A name relative to this page (the emulator's own folder) or a full URL
+  function loadUrl(url) {
+    var name = decodeURIComponent(url.split(/[?#]/)[0].split('/').pop() || 'program.bin');
+    setStatus('Fetching ' + url + '…');
+    fetch(url).then(function (r) {
+      if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+      return r.arrayBuffer();
+    }).then(function (buf) {
+      start(name, new Uint8Array(buf));
+    }).catch(function (e) {
+      setStatus('Could not fetch ' + url + ': ' + e.message +
+                (location.protocol === 'file:' ? ' (serve the folder over http, browsers block fetch from file://)' : ''));
+    });
+  }
+
+  var Module = {
+    canvas: document.getElementById('canvas'),
+    setStatus: function (t) { if (t) setStatus(t); },
+    postRun: [function () {
+      // the saves have to be read in before a game starts, or it would start without them
+      FS.syncfs(true, function () {
+        ready = true;
+        setStatus(pending ? '' : 'Open a program to start');
+        if (pending) { var p = pending; pending = null; start(p[0], p[1]); }
+      });
+    }],
+  };
+
+  document.getElementById('file').addEventListener('change', function (e) {
+    var f = e.target.files[0];
+    if (!f) return;
+    f.arrayBuffer().then(function (buf) { start(f.name, new Uint8Array(buf)); });
+    e.target.value = '';
+  });
+  document.getElementById('load').addEventListener('click', function () {
+    var u = document.getElementById('url').value.trim();
+    if (u) loadUrl(u);
+  });
+  document.getElementById('url').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') document.getElementById('load').click();
+  });
+
+  // an optional list of the games that sit beside the page
+  fetch('games.json').then(function (r) { return r.ok ? r.json() : []; }).then(function (list) {
+    if (!Array.isArray(list) || !list.length) return;
+    var sel = document.getElementById('games');
+    list.forEach(function (g) {
+      var o = document.createElement('option');
+      o.value = typeof g === 'string' ? g : g.file;
+      o.textContent = typeof g === 'string' ? g : (g.name || g.file);
+      sel.appendChild(o);
+    });
+    sel.hidden = false;
+    sel.addEventListener('change', function () { if (sel.value) loadUrl(sel.value); });
+  }).catch(function () {});
+
+  var rom = new URLSearchParams(location.search).get('rom');
+  if (rom) loadUrl(rom);
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>
