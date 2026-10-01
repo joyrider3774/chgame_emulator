@@ -78,7 +78,13 @@
     });
   }
 
+  // tools/make_web.sh stamps the build here and on the script tag: every
+  // build has its own URLs, so a browser or CDN never pairs an old .js with
+  // a new .wasm (that fails with "LinkError: import ... requires a callable")
+  var BUILD_ID = 'dev';
+
   var Module = {
+    locateFile: function (path) { return path + '?v=' + BUILD_ID; },
     canvas: document.getElementById('canvas'),
     setStatus: function (t) { if (t) setStatus(t); },
     postRun: [function () {

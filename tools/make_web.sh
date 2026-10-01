@@ -22,6 +22,20 @@ cd "$HERE" || exit 1
 [ web/shell.html -nt build_web/CHGame_Emulator.html ] && rm -f build_web/CHGame_Emulator.html
 cmake --build build_web || exit 1
 
+# every build gets its own .js/.wasm URLs (?v= the .wasm's hash), so neither a
+# browser nor a CDN can pair an old .js with a new .wasm
+python - "build_web/CHGame_Emulator.html" "build_web/CHGame_Emulator.wasm" <<'PY'
+import hashlib, re, sys
+html, wasm = sys.argv[1], sys.argv[2]
+build = hashlib.sha1(open(wasm, "rb").read()).hexdigest()[:12]
+t = open(html, encoding="utf-8").read()
+# the page's script comes out minified: BUILD_ID="dev"
+t = re.sub(r"""BUILD_ID\s*=\s*["'][^"']*["']""", 'BUILD_ID="%s"' % build, t)
+t = re.sub(r'src="?CHGame_Emulator\.js(\?v=\w+)?"?>', 'src="CHGame_Emulator.js?v=%s">' % build, t)
+open(html, "w", encoding="utf-8").write(t)
+print("build", build)
+PY
+
 rm -rf build_web/roms
 cp -r roms build_web/roms
 python - <<'PY'
