@@ -36,7 +36,8 @@ Modelled on the owner's earlier TinyJoypad emulator
 | `src/sdspi.c` | the microSD card in SPI mode: command frames, R1/R3/R7, data tokens, CMD18 streaming, CMD24/25 writes. Selected by PB11 low in `spi_deliver()` (bus.c) |
 | `src/sdcard.c` | card storage, image file or folder built into an in-memory FAT32 card and synced back, formatter, `sdcard_make_image` |
 | `src/main.c` | SDL3 front end using SDL main callbacks (works under Emscripten unchanged) |
-| `web/shell.html` | page around the web build: file picker, URL box, `?rom=`, `games.json` menu |
+| `web/shell.html` | page around the web build: file picker, URL box, `?rom=`, `?sd=`, `games.json` menu, card manager overlay |
+| `web/sdcard.html`, `web/sdtools.js` | the card manager page (`?card=chgame`) and the zip / FAT-image reader + zip writer. **Identical copies in aka_emulator/web: change both.** The manager edits the IDBFS database (`/chgame/sdcard`, store `FILE_DATA`, key = full path, `{timestamp, mode, contents}`) directly; the overlay ejects the card (`chg_web_sd_eject`, pauses) and reinserts it after `syncfs(true)` |
 | `tools/headless.c` | `chg_headless`: run without a window, report speed, dump screen/RAM/registers |
 | `tools/build_roms.sh` | builds every known CHGame program into `roms/` (gitignored) |
 | `tools/make_web.sh` | Emscripten build + roms + games.json, `serve` to host with Python |
@@ -183,7 +184,7 @@ the `ALIGN4` macro in `bench.S`), and use `.option norelax`.
 - **Buzzer**: PB10 as GPIO or TIM1 CH2 PWM (AFIO PCFR1 bits 17:15 = 1). State
   changes are logged with timestamps; `audio.c` integrates in closed form.
 - **Saves**: flash pages the program writes go to `<rom>.sav`
-  (4-byte address + 256 bytes, repeated); IndexedDB `/saves` on the web.
+  (4-byte address + 256 bytes, repeated); on the web IndexedDB `/chgame/saves`, the card `/chgame/sdcard` (IDBFS names the database after the mount point; the AKA emulator on the same site uses `/aka/...`. Builds before 2026-10-01 used the shared `/sdcard` and `/saves`: the page copies the old saves in once, see `fromShared` in shell.html).
 - **USB** is a dumb register block: the core's CDC code runs, nothing
   enumerates, `Serial` output is dropped (as on a board with no PC).
 - The game-fps number is a heuristic (a RAMWR window starting above the last

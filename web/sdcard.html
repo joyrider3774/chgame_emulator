@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>microSD card</title>
+<link rel="icon" href="data:,">
+<!--
+  The card manager of the CHGame and AKA web emulators: what is on the
+  emulated card, in this browser. The same page is in both repositories
+  (chgame_emulator/web and aka_emulator/web): change both.
+
+    sdcard.html?card=chgame       the CHGame emulator's card
+    sdcard.html?card=aka          the AKA emulator's card
+    &embed=1                      opened by the emulator page in its overlay:
+                                  a Done button hands the card back
+
+  The emulators keep the card as an Emscripten IDBFS mount: an IndexedDB
+  database named after the mount point (/chgame/sdcard, /aka/sdcard), store
+  FILE_DATA, one record per file or folder keyed by its full path:
+  { timestamp: Date, mode, contents: Uint8Array }. This page reads and
+  writes those records directly; the emulator reads them in when it starts
+  (or when the overlay closes). A new timestamp on every write is what makes
+  IDBFS copy a changed file in.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #18181c; color: #ddd; font: 14px system-ui, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.25em; margin: 0 0 4px; }
+  .sub { color: #999; margin: 0 0 14px; }
+  .warn { color: #e0b050; margin: 0 0 14px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 12px; }
+  .bar .grow { flex: 1; }
+  button, label.button { background: #3a3a44; color: #ddd; border: 0; padding: 6px 10px; border-radius: 4px;
+    font: inherit; cursor: pointer; white-space: nowrap; }
+  button:hover, label.button:hover { background: #4a4a56; }
+  button.primary { background: #2f6f8f; color: #fff; }
+  button.primary:hover { background: #3a86ab; }
+  button.danger:hover { background: #8a3030; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  input[type=file] { display: none; }
+  nav.crumbs { margin: 0 0 8px; font-size: 1.05em; }
+  nav.crumbs a { color: #8cc8ff; text-decoration: none; cursor: pointer; }
+  nav.crumbs a:hover { text-decoration: underline; }
+  nav.crumbs span.sep { color: #666; margin: 0 6px; }
+  .drop { border: 1px solid #2c2c34; border-radius: 6px; background: #1f1f25; }
+  .drop.over { border-color: #3a86ab; background: #1d2a33; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #2c2c34; }
+  th { color: #999; font-weight: 500; font-size: 0.9em; }
+  td.size, th.size { text-align: right; white-space: nowrap; }
+  td.when { color: #999; white-space: nowrap; }
+  td.acts { text-align: right; white-space: nowrap; }
+  td.acts button { padding: 3px 8px; margin-left: 4px; }
+  tr:last-child td { border-bottom: 0; }
+  td.name a { color: #8cc8ff; text-decoration: none; cursor: pointer; }
+  td.name a:hover { text-decoration: underline; }
+  .icon { display: inline-block; width: 1.4em; color: #999; }
+  .empty { color: #888; padding: 28px; text-align: center; }
+  #status { min-height: 1.3em; color: #9ad; margin: 10px 0 0; }
+  @media (max-width: 600px) { td.when, th.when { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="bar">
+    <div class="grow">
+      <h1 id="title">microSD card</h1>
+    </div>
+    <button id="done" class="primary" hidden>Done</button>
+  </div>
+  <p class="sub" id="summary">Reading the card…</p>
+  <p class="warn" id="standalone" hidden>The emulator reads the card when it starts. If it is open in another
+    tab, reload it after making changes here, and do not let a program write to the card meanwhile (the
+    emulator would put its own copy back). Its <b>Manage…</b> button avoids both.</p>
+
+  <div class="bar">
+    <label class="button">Add files…<input id="files" type="file" multiple></label>
+    <label class="button">Add a folder…<input id="folder" type="file" webkitdirectory></label>
+    <label class="button" title="Puts what is in a .zip file or a card image (.img / .bin, FAT) into this folder">Unpack a zip / card image…<input id="archive" type="file" accept=".zip,.img,.bin,.ima,.dd,.raw"></label>
+    <button id="mkdir">New folder…</button>
+    <span class="grow"></span>
+    <button id="zipall">Download all (.zip)</button>
+    <button id="clear" class="danger">Empty the card</button>
+  </div>
+
+  <nav class="crumbs" id="crumbs"></nav>
+  <div class="drop" id="drop">
+    <table>
+      <thead><tr><th>Name</th><th class="size">Size</th><th class="when">Modified</th><th></th></tr></thead>
+      <tbody id="list"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden>This folder is empty. Drop files or folders here, or use the buttons above.</div>
+  </div>
+  <p id="status"></p>
+</main>
+
+<script src="sdtools.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var params = new URLSearchParams(location.search);
+  var CARDS = { chgame: 'CHGame microSD card', aka: 'AKA SD card' };
+  var card = (params.get('card') || '').toLowerCase();
+  var embed = params.get('embed') === '1';
+  var $ = function (id) { return document.getElementById(id); };
+  if (!/^[a-z0-9_-]+$/.test(card)) {
+    $('summary').textContent = 'Which card? Open this page as sdcard.html?card=chgame or sdcard.html?card=aka.';
+    return;
+  }
+  var ROOT = '/' + card + '/sdcard';                    // the IDBFS mount point = the database name
+  var SOURCE_MARK = '/' + card + '/saves/.sd-source';   // which ?sd= the emulator filled the card from
+  var STORE = 'FILE_DATA', DB_VERSION = 21;             // Emscripten's IDBFS layout
+  var MODE_DIR = 16895, MODE_FILE = 33206;              // 040777, 0100666: what MEMFS gives new ones
+
+  $('title').textContent = CARDS[card] || card + ' card';
+  document.title = (CARDS[card] || card + ' card') + ' — files';
+  if (embed) $('done').hidden = false; else $('standalone').hidden = false;
+
+  var cwd = '';          // the folder shown, relative to the card's root ('' = the root)
+  var items = {};        // relative path -> { dir, size, time }
+
+  function status(t) { $('status').textContent = t || ''; }
+  function fail(e) { status('Error: ' + (e && e.message ? e.message : e)); console.error(e); }
+  function size(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+  function join(a, b) { return a ? a + '/' + b : b; }
+  function parent(p) { var i = p.lastIndexOf('/'); return i < 0 ? '' : p.substring(0, i); }
+  function base(p) { return p.substring(p.lastIndexOf('/') + 1); }
+
+  // ---- the database ----
+
+  function openDb(name) {
+    return new Promise(function (resolve, reject) {
+      var req = indexedDB.open(name, DB_VERSION);
+      req.onupgradeneeded = function (e) {
+        var db = e.target.result, tx = e.target.transaction;
+        var store = db.objectStoreNames.contains(STORE) ? tx.objectStore(STORE) : db.createObjectStore(STORE);
+        if (!store.indexNames.contains('timestamp')) store.createIndex('timestamp', 'timestamp', { unique: false });
+      };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error); };
+      req.onblocked = function () { reject(new Error('the card is in use by another tab with an older emulator')); };
+    });
+  }
+  var dbp = openDb(ROOT);
+
+  // runs fn(store) in one transaction; resolves with fn's result when it commits
+  function inTx(mode, fn, dbname) {
+    return (dbname ? openDb(dbname) : dbp).then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction([STORE], mode), result;
+        tx.oncomplete = function () { resolve(result); };
+        tx.onerror = tx.onabort = function () { reject(tx.error || new Error('the database refused the change')); };
+        result = fn(tx.objectStore(STORE));
+      });
+    });
+  }
+
+  function refresh() {
+    var keys, vals;
+    return inTx('readonly', function (store) {
+      store.getAllKeys().onsuccess = function (e) { keys = e.target.result; };
+      store.getAll().onsuccess = function (e) { vals = e.target.result; };
+    }).then(function () {
+      items = {};
+      keys.forEach(function (k, i) {
+        if (k.indexOf(ROOT + '/') !== 0) return;
+        var v = vals[i], rel = k.substring(ROOT.length + 1);
+        var dir = (v.mode & 0xF000) === 0x4000;
+        items[rel] = { dir: dir, size: dir ? 0 : (v.contents ? v.contents.length : 0), time: v.timestamp };
+      });
+      // a file whose folder has no record of its own (made by an older page): show the folder anyway
+      Object.keys(items).forEach(function (p) {
+        for (var q = parent(p); q; q = parent(q)) if (!items[q]) items[q] = { dir: true, size: 0, time: null, missing: true };
+      });
+      if (cwd && !(items[cwd] && items[cwd].dir)) cwd = '';
+      render();
+    });
+  }
+
+  // files: [{ path (relative to the root), data }]; folders: [path]
+  function put(files, folders) {
+    var now = new Date(), dirs = {};
+    // every folder on the way needs its own record: IDBFS makes the folders
+    // from those before it writes the files into them
+    function need(p) { for (; p; p = parent(p)) if (!(items[p] && items[p].dir && !items[p].missing)) dirs[p] = true; }
+    (folders || []).forEach(need);
+    files.forEach(function (f) { need(parent(f.path)); });
+    var clash = files.filter(function (f) { return items[f.path] && items[f.path].dir; });
+    if (clash.length) return Promise.reject(new Error(clash[0].path + ' is a folder on the card'));
+    return inTx('readwrite', function (store) {
+      Object.keys(dirs).sort().forEach(function (d) { store.put({ timestamp: now, mode: MODE_DIR }, ROOT + '/' + d); });
+      files.forEach(function (f) {
+        store.put({ timestamp: now, mode: MODE_FILE, contents: f.data }, ROOT + '/' + f.path);
+      });
+    });
+  }
+
+  function remove(path) {
+    var key = ROOT + '/' + path;
+    return inTx('readwrite', function (store) {
+      store.delete(key);
+      store.delete(IDBKeyRange.bound(key + '/', key + '/￿'));
+    });
+  }
+
+  function readFiles(prefix) {
+    // [{ path relative to prefix's folder, dir, data, time }] for everything under prefix ('' = all)
+    var from = prefix ? ROOT + '/' + prefix + '/' : ROOT + '/', out = [];
+    return inTx('readonly', function (store) {
+      store.openCursor(IDBKeyRange.bound(from, from + '￿')).onsuccess = function (e) {
+        var c = e.target.result;
+        if (!c) return;
+        var v = c.value, dir = (v.mode & 0xF000) === 0x4000;
+        out.push({ path: c.key.substring(from.length), dir: dir, data: dir ? null : v.contents, time: v.timestamp });
+        c.continue();
+      };
+    }).then(function () {
+      return out.sort(function (a, b) { return a.path < b.path ? -1 : 1; });
+    });
+  }
+
+  // ---- showing the folder ----
+
+  function render() {
+    var crumbs = $('crumbs');
+    crumbs.textContent = '';
+    var parts = cwd ? cwd.split('/') : [];
+    var link = function (label, path) {
+      var a = document.createElement('a');
+      a.textContent = label;
+      a.onclick = function () { cwd = path; render(); };
+      return a;
+    };
+    crumbs.appendChild(link('Card', ''));
+    parts.forEach(function (p, i) {
+      var sep = document.createElement('span');
+      sep.className = 'sep';
+      sep.textContent = '/';
+      crumbs.appendChild(sep);
+      crumbs.appendChild(link(p, parts.slice(0, i + 1).join('/')));
+    });
+
+    var here = Object.keys(items).filter(function (p) { return parent(p) === cwd; });
+    here.sort(function (a, b) {
+      var da = items[a].dir, db = items[b].dir;
+      if (da !== db) return da ? -1 : 1;
+      return base(a).toLowerCase() < base(b).toLowerCase() ? -1 : 1;
+    });
+    var tbody = $('list');
+    tbody.textContent = '';
+    here.forEach(function (p) {
+      var it = items[p], tr = document.createElement('tr');
+      var name = document.createElement('td');
+      name.className = 'name';
+      var icon = document.createElement('span');
+      icon.className = 'icon';
+      icon.textContent = it.dir ? '📁' : '📄';
+      name.appendChild(icon);
+      if (it.dir) {
+        var a = document.createElement('a');
+        a.textContent = base(p);
+        a.onclick = function () { cwd = p; render(); };
+        name.appendChild(a);
+      } else {
+        name.appendChild(document.createTextNode(base(p)));
+      }
+      var sz = document.createElement('td');
+      sz.className = 'size';
+      if (it.dir) {
+        var n = 0, total = 0;
+        Object.keys(items).forEach(function (q) {
+          if (q.indexOf(p + '/') === 0 && !items[q].dir) { n++; total += items[q].size; }
+        });
+        sz.textContent = n + (n === 1 ? ' file, ' : ' files, ') + size(total);
+      } else {
+        sz.textContent = size(it.size);
+      }
+      var when = document.createElement('td');
+      when.className = 'when';
+      when.textContent = it.time ? it.time.toLocaleString() : '';
+      var acts = document.createElement('td');
+      acts.className = 'acts';
+      var dl = document.createElement('button');
+      dl.textContent = it.dir ? 'Download .zip' : 'Download';
+      dl.onclick = function () { (it.dir ? downloadZip(p) : downloadFile(p)).catch(fail); };
+      var del = document.createElement('button');
+      del.textContent = 'Delete';
+      del.className = 'danger';
+      del.onclick = function () {
+        if (!confirm('Delete ' + p + (it.dir ? ' and everything in it?' : '?'))) return;
+        remove(p).then(refresh).then(function () { status(p + ' deleted'); }).catch(fail);
+      };
+      acts.appendChild(dl);
+      acts.appendChild(del);
+      tr.appendChild(name);
+      tr.appendChild(sz);
+      tr.appendChild(when);
+      tr.appendChild(acts);
+      tbody.appendChild(tr);
+    });
+    $('empty').hidden = here.length > 0;
+
+    var files = 0, bytes = 0, folders = 0;
+    Object.keys(items).forEach(function (p) {
+      if (items[p].dir) folders++; else { files++; bytes += items[p].size; }
+    });
+    $('summary').textContent = files + (files === 1 ? ' file' : ' files') + ' in ' + folders +
+      (folders === 1 ? ' folder' : ' folders') + ', ' + size(bytes) + '. Stored in this browser only.';
+  }
+
+  // ---- downloads ----
+
+  function save(data, name) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([data], { type: 'application/octet-stream' }));
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 20000);
+  }
+
+  function downloadFile(p) {
+    return inTx('readonly', function (store) {
+      store.get(ROOT + '/' + p).onsuccess = function (e) { save(e.target.result.contents, base(p)); };
+    });
+  }
+
+  function downloadZip(p) {
+    status('Packing ' + (p || 'the card') + '…');
+    return readFiles(p).then(function (entries) {
+      save(SDTools.zip(entries), (p ? base(p) : card + '_sdcard') + '.zip');
+      status((p || 'The card') + ': ' + entries.filter(function (e) { return !e.dir; }).length + ' file(s) packed');
+    });
+  }
+
+  // ---- uploads ----
+
+  function addFiles(list, what) {
+    var files = Array.prototype.slice.call(list);
+    if (!files.length) return;
+    status('Adding ' + files.length + ' file(s)…');
+    Promise.all(files.map(function (f) {
+      return f.arrayBuffer().then(function (b) {
+        var rel = SDTools.cleanPath(f.webkitRelativePath || f.relativePath || f.name);
+        return { path: join(cwd, rel), data: new Uint8Array(b) };
+      });
+    })).then(function (got) {
+      return put(got).then(refresh).then(function () {
+        status(got.length + ' ' + (what || 'file(s)') + ' added to ' + (cwd || 'the card'));
+      });
+    }).catch(fail);
+  }
+
+  function unpackArchive(file) {
+    status('Unpacking ' + file.name + '…');
+    file.arrayBuffer().then(function (b) {
+      return SDTools.unpack(b);
+    }).then(function (entries) {
+      var files = [], folders = [];
+      entries.forEach(function (e) {
+        if (e.dir) folders.push(join(cwd, e.path));
+        else files.push({ path: join(cwd, e.path), data: e.data });
+      });
+      return put(files, folders).then(refresh).then(function () {
+        status(file.name + ': ' + files.length + ' file(s) put in ' + (cwd || 'the card'));
+      });
+    }).catch(fail);
+  }
+
+  $('files').onchange = function (e) { addFiles(e.target.files); e.target.value = ''; };
+  $('folder').onchange = function (e) { addFiles(e.target.files); e.target.value = ''; };
+  $('archive').onchange = function (e) { if (e.target.files[0]) unpackArchive(e.target.files[0]); e.target.value = ''; };
+  $('mkdir').onclick = function () {
+    var name = prompt('Name of the new folder in ' + (cwd || 'the card') + ':');
+    if (!name) return;
+    var p = join(cwd, SDTools.cleanPath(name));
+    if (items[p]) { status(p + ' is already there'); return; }
+    put([], [p]).then(refresh).then(function () { status(p + ' made'); }).catch(fail);
+  };
+  $('zipall').onclick = function () { downloadZip('').catch(fail); };
+  $('clear').onclick = function () {
+    if (!confirm('Delete everything on the ' + (CARDS[card] || 'card') + '?')) return;
+    inTx('readwrite', function (store) { store.clear(); }).then(function () {
+      // and forget which ?sd= filled it, so a link with ?sd= fills it again
+      return inTx('readwrite', function (store) { store.delete(SOURCE_MARK); }, '/' + card + '/saves');
+    }).then(refresh).then(function () { status('The card is empty'); }).catch(fail);
+  };
+  $('done').onclick = function () { window.parent.postMessage({ type: 'sd-manager-done' }, location.origin); };
+
+  // drag and drop: files and whole folders
+  var drop = $('drop');
+  ['dragenter', 'dragover'].forEach(function (t) {
+    drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (t) {
+    drop.addEventListener(t, function () { drop.classList.remove('over'); });
+  });
+  drop.addEventListener('drop', function (e) {
+    e.preventDefault();
+    var roots = Array.prototype.map.call(e.dataTransfer.items || [], function (i) {
+      return i.webkitGetAsEntry ? i.webkitGetAsEntry() : null;
+    }).filter(Boolean);
+    if (!roots.length) { addFiles(e.dataTransfer.files); return; }
+    var out = [];
+    function walk(entry, path) {
+      if (entry.isFile) {
+        return new Promise(function (res, rej) {
+          entry.file(function (f) { f.relativePath = join(path, f.name); out.push(f); res(); }, rej);
+        });
+      }
+      var reader = entry.createReader(), all = [];
+      return new Promise(function (res, rej) {
+        (function more() {
+          reader.readEntries(function (batch) {
+            if (!batch.length) {
+              Promise.all(all.map(function (c) { return walk(c, join(path, entry.name)); })).then(res, rej);
+              return;
+            }
+            all = all.concat(batch);
+            more();
+          }, rej);
+        })();
+      });
+    }
+    Promise.all(roots.map(function (r) { return walk(r, ''); })).then(function () { addFiles(out); }).catch(fail);
+  });
+
+  refresh().catch(fail);
+})();
+</script>
+</body>
+</html>

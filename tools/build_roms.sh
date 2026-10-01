@@ -68,6 +68,12 @@ fi
     echo "bateske|FileBrowser|$GITHUB/FileBrowser|opt=osstd|"
     # README: needs LTO to fit, and the C library's nano variant
     echo "bateske|CHChess|$GITHUB/CHChess|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
+    echo "bateske|CHPoker|$GITHUB/CHPoker|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
+    echo "bateske|CHMahjong|$GITHUB/CHMahjong|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
+    echo "bateske|CHCraps|$GITHUB/CHCraps|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
+    echo "bateske|CHRoulette|$GITHUB/CHRoulette|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
+    echo "bateske|CHBoardwalk|$GITHUB/CHBoardwalk|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
+    echo "bateske|CHBackgammon|$GITHUB/CHBackgammon|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
     echo "bateske|CHSDtoUSB|$GITHUB/CHSDtoUSB|opt=osstd|"
     echo "poevoid|CHGame-Ponglike|$GITHUB/CHGame-Ponglike|opt=osstd|"
     for ex in "$GITHUB"/CHGfx/examples/*/; do

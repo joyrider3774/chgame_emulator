@@ -87,6 +87,8 @@ typedef struct {
     char sd_path[1024];     /* the microSD card: a folder or an image file, "" for none */
     uint32_t sd_mb;
     Uint64 sd_synced;
+    bool sd_ejected;                /* web: the card manager has the card */
+    bool paused_before_eject;
 } App;
 
 static void show_message(App *app, const char *fmt, ...)
@@ -151,7 +153,7 @@ static bool load_program(App *app, const char *path)
     const char *base = SDL_strrchr(path, '/');
     base = base ? base + 1 : path;
     char tmp[1100];
-    SDL_snprintf(tmp, sizeof tmp, "/saves/%s", base);
+    SDL_snprintf(tmp, sizeof tmp, "/chgame/saves/%s", base);
     chg_save_path(tmp, app->save_path, sizeof app->save_path);
 #else
     chg_save_path(path, app->save_path, sizeof app->save_path);
@@ -195,7 +197,28 @@ EMSCRIPTEN_KEEPALIVE int chg_web_sd_reinsert(void)
     web_app->m->sd = NULL;
     insert_sd(web_app);
     if (web_app->loaded) chg_reset(web_app->m, true);
+    if (web_app->sd_ejected) {
+        web_app->paused = web_app->paused_before_eject;
+        web_app->sd_ejected = false;
+    }
     return web_app->m->sd != NULL;
+}
+
+/* The page's card manager is about to edit the card's files behind the
+   emulator's back: the card comes out (what the program wrote goes into the
+   folder first; the page then saves the folder to IndexedDB) and the CHGame
+   pauses until chg_web_sd_reinsert puts it back */
+EMSCRIPTEN_KEEPALIVE int chg_web_sd_eject(void)
+{
+    if (!web_app) return 0;
+    sdcard_close(web_app->m->sd);
+    web_app->m->sd = NULL;
+    if (!web_app->sd_ejected) {
+        web_app->paused_before_eject = web_app->paused;
+        web_app->sd_ejected = true;
+    }
+    web_app->paused = true;
+    return 1;
 }
 
 /* Writes what is on the card to 'out' as a card image, for download */
@@ -322,17 +345,21 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
 
 #ifdef __EMSCRIPTEN__
     /* saves live in the browser's IndexedDB. The page reads them in
-       (FS.syncfs) before it hands over the first program, see shell.html */
+       (FS.syncfs) before it hands over the first program, see shell.html.
+       IDBFS names its database after the mount point, so the mounts are
+       under /chgame: the AKA emulator on the same site keeps its own card
+       and saves under /aka instead of sharing "/sdcard" and "/saves" */
     web_app = app;
     EM_ASM(
-        FS.mkdir('/saves');
-        FS.mount(IDBFS, {}, '/saves');
-        FS.mkdir('/sdcard');
-        FS.mount(IDBFS, {}, '/sdcard');
+        FS.mkdir('/chgame');
+        FS.mkdir('/chgame/saves');
+        FS.mount(IDBFS, {}, '/chgame/saves');
+        FS.mkdir('/chgame/sdcard');
+        FS.mount(IDBFS, {}, '/chgame/sdcard');
     );
     /* the card is a folder in IndexedDB, read in by the page before the
        first program: it goes in with that program */
-    SDL_strlcpy(app->sd_path, "/sdcard", sizeof app->sd_path);
+    SDL_strlcpy(app->sd_path, "/chgame/sdcard", sizeof app->sd_path);
 #else
     /* the card defaults to the folder "sdcard" next to the emulator */
     const char *base = SDL_GetBasePath();

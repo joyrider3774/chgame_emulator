@@ -24,15 +24,22 @@ cmake --build build_web || exit 1
 
 # every build gets its own .js/.wasm URLs (?v= the .wasm's hash), so neither a
 # browser nor a CDN can pair an old .js with a new .wasm
-python - "build_web/CHGame_Emulator.html" "build_web/CHGame_Emulator.wasm" <<'PY'
+# The card manager page and the card helpers it shares with the emulator page
+# (web/sdcard.html, web/sdtools.js: the same files as in aka_emulator) go
+# beside it, stamped the same way.
+cp web/sdcard.html web/sdtools.js build_web/
+python - "build_web/CHGame_Emulator.html" "build_web/CHGame_Emulator.wasm" "build_web/sdtools.js" <<'PY'
 import hashlib, re, sys
-html, wasm = sys.argv[1], sys.argv[2]
-build = hashlib.sha1(open(wasm, "rb").read()).hexdigest()[:12]
-t = open(html, encoding="utf-8").read()
-# the page's script comes out minified: BUILD_ID="dev"
-t = re.sub(r"""BUILD_ID\s*=\s*["'][^"']*["']""", 'BUILD_ID="%s"' % build, t)
-t = re.sub(r'src="?CHGame_Emulator\.js(\?v=\w+)?"?>', 'src="CHGame_Emulator.js?v=%s">' % build, t)
-open(html, "w", encoding="utf-8").write(t)
+html, wasm, tools = sys.argv[1], sys.argv[2], sys.argv[3]
+build = hashlib.sha1(open(wasm, "rb").read() + open(tools, "rb").read() +
+                     open("web/sdcard.html", "rb").read()).hexdigest()[:12]
+for page in (html, "build_web/sdcard.html"):
+    t = open(page, encoding="utf-8").read()
+    # the page's script comes out minified: BUILD_ID="dev"
+    t = re.sub(r"""BUILD_ID\s*=\s*["'][^"']*["']""", 'BUILD_ID="%s"' % build, t)
+    t = re.sub(r'src="?CHGame_Emulator\.js(\?v=\w+)?"?>', 'src="CHGame_Emulator.js?v=%s">' % build, t)
+    t = re.sub(r'src="?sdtools\.js(\?v=\w+)?"?>', 'src="sdtools.js?v=%s">' % build, t)
+    open(page, "w", encoding="utf-8").write(t)
 print("build", build)
 PY
 

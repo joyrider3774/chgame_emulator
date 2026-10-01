@@ -21,6 +21,12 @@
   input[type=file] { display: none; }
   #status { color: #999; min-height: 1.2em; }
   p.keys { color: #888; max-width: 512px; padding: 0 16px; text-align: center; }
+  /* the card manager (sdcard.html) over the emulator */
+  #sdoverlay { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+               background: rgba(0, 0, 0, 0.75); padding: 12px; box-sizing: border-box; }
+  #sdoverlay[hidden] { display: none; }
+  #sdframe { width: min(940px, 100%); height: min(760px, 100%); border: 1px solid #44444e; border-radius: 6px;
+             background: #18181c; }
 </style>
 </head>
 <body>
@@ -33,6 +39,7 @@
 </header>
 <header>
   microSD:
+  <button id="sdmanage" title="See, add, download and delete the files on the card">Manage…</button>
   <label class="button">Add files…<input id="sdfiles" type="file" multiple></label>
   <label class="button">Add a folder…<input id="sddir" type="file" webkitdirectory></label>
   <button id="sdimage">Download as image</button>
@@ -46,6 +53,12 @@
   <code>?rom=name.bin</code> from the folder the emulator is in
   (<code>?rom=https://…</code> works for any address that allows it).
   A <code>games.json</code> beside the page — a list of file names — fills the Games menu.</p>
+<p class="keys"><code>?sd=card.zip</code> or <code>?sd=card.img</code> (beside the page or a full URL) fills the
+  microSD card from a zip file or a card image, once: the card then keeps what programs write to it until
+  the file changes. Without <code>?sd=</code>, a <code>sdcard.zip</code> or <code>sdcard.img</code> beside the page
+  is used the same way. <b>Manage…</b> shows the card's files.</p>
+<div id="sdoverlay" hidden><iframe id="sdframe" title="microSD card"></iframe></div>
+<script src="sdtools.js"></script>
 <script>
   var statusEl = document.getElementById('status');
   var ready = false, pending = null;
@@ -90,12 +103,146 @@
     postRun: [function () {
       // the saves have to be read in before a game starts, or it would start without them
       FS.syncfs(true, function () {
-        ready = true;
-        setStatus(pending ? '' : 'Open a program to start');
-        if (pending) { var p = pending; pending = null; start(p[0], p[1]); }
+        fromShared(function () {
+          cardFromParam(function () {
+            ready = true;
+            if (!statusEl.textContent || /^Loading|^Fetching/.test(statusEl.textContent))
+              setStatus(pending ? '' : 'Open a program to start');
+            if (pending) { var p = pending; pending = null; start(p[0], p[1]); }
+          });
+        });
       });
     }],
   };
+
+  // The card and the saves are IndexedDB databases named after their mount
+  // points, /chgame/sdcard and /chgame/saves (see main.c). Builds before
+  // that used /sdcard and /saves, which the AKA emulator on the same site
+  // used too. Once, the saves from there are copied in (the file names are
+  // the games', so the AKA's do no harm); the shared card stays with the
+  // AKA emulator, the CHGame starts with an empty one. Nothing is deleted.
+  var SD = '/chgame/sdcard', SAVES = '/chgame/saves', MOVED = SAVES + '/.from-shared';
+  function fromShared(done) {
+    if (FS.analyzePath(MOVED).exists) { done(); return; }
+    try { FS.mkdir('/saves'); FS.mount(IDBFS, {}, '/saves'); } catch (e) { done(); return; }
+    FS.syncfs(true, function () {
+      FS.readdir('/saves').forEach(function (n) {
+        var from = '/saves/' + n, to = SAVES + '/' + n;
+        if (n === '.' || n === '..' || FS.isDir(FS.stat(from).mode) || FS.analyzePath(to).exists) return;
+        FS.writeFile(to, FS.readFile(from));
+      });
+      FS.writeFile(MOVED, '');
+      FS.unmount('/saves');
+      FS.syncfs(false, function () { done(); });
+    });
+  }
+
+  function emptyDir(dir) {
+    FS.readdir(dir).forEach(function (n) {
+      if (n === '.' || n === '..') return;
+      var p = dir + '/' + n;
+      if (FS.isDir(FS.stat(p).mode)) { emptyDir(p); FS.rmdir(p); } else FS.unlink(p);
+    });
+  }
+
+  // ?sd=card.zip or ?sd=card.img (beside the page or a URL), or without it
+  // a sdcard.zip or else a sdcard.img beside the page: the card is filled
+  // from it before the first program starts. Only when it is new: its
+  // address, size and date are kept in SOURCE, and as long as the server
+  // reports the same (a HEAD request, so an unchanged image is not
+  // downloaded again) the card keeps what the programs wrote to it.
+  // Emptying the card forgets SOURCE.
+  var SOURCE = SAVES + '/.sd-source';
+  function cardFromParam(done) {
+    var given = new URLSearchParams(location.search).get('sd');
+    var tries = given ? [given] : ['sdcard.zip', 'sdcard.img'];
+    var old = FS.analyzePath(SOURCE).exists ? FS.readFile(SOURCE, { encoding: 'utf8' }) : '';
+    function stampOf(src, r, size) {
+      return [src, r.headers.get('Content-Length') || size || '',
+              r.headers.get('ETag') || r.headers.get('Last-Modified') || ''].join('\n');
+    }
+    // the first of 'tries' the server has: { src, stamp } or null
+    function find(i) {
+      if (i >= tries.length) return Promise.resolve(null);
+      var src = tries[i];
+      return fetch(src, { method: 'HEAD', cache: 'no-cache' }).then(function (r) {
+        if (r.ok) return { src: src, stamp: stampOf(src, r) };
+        // a server without HEAD: decide after the download
+        if (r.status === 405 || r.status === 501) return { src: src, stamp: null };
+        if (given) throw new Error(r.status + ' ' + r.statusText);
+        return find(i + 1);
+      }, function (e) {
+        if (given) throw e;
+        return find(i + 1);
+      });
+    }
+    find(0).then(function (found) {
+      if (!found) { done(); return; }
+      if (found.stamp && found.stamp === old) { done(); return; }
+      var src = found.src;
+      setStatus('Fetching the card ' + src + '…');
+      return fetch(src, { cache: 'no-cache' }).then(function (r) {
+        if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+        return r.arrayBuffer().then(function (buf) { return [buf, found.stamp || stampOf(src, r, buf.byteLength)]; });
+      }).then(function (got) {
+        var buf = got[0], stamp = got[1];
+        if (stamp === old) { setStatus(''); done(); return; }
+        return fill(src, buf, stamp);
+      });
+    }).catch(function (e) {
+      setStatus('Could not fill the card from ' + (given || 'sdcard.zip / sdcard.img') + ': ' + e.message +
+                (location.protocol === 'file:' ? ' (serve the folder over http, browsers block fetch from file://)' : ''));
+      done();
+    });
+
+    function fill(src, buf, stamp) {
+      return SDTools.unpack(buf).then(function (entries) {
+        emptyDir(SD);
+        var files = 0;
+        entries.forEach(function (e) {
+          var p = SD + '/' + e.path;
+          if (e.dir) { mkdirs(p); return; }
+          mkdirs(p.substring(0, p.lastIndexOf('/')));
+          FS.writeFile(p, e.data);
+          files++;
+        });
+        FS.writeFile(SOURCE, stamp);
+        return new Promise(function (res) { FS.syncfs(false, res); }).then(function () {
+          setStatus('microSD card filled from ' + src + ': ' + files + ' file(s)');
+          done();
+        });
+      });
+    }
+  }
+
+  // The card manager (sdcard.html) in an overlay. While it is open the card
+  // is out of the CHGame and the CHGame paused: the manager edits the card's
+  // IndexedDB copy directly, and what the CHGame wrote is saved there first.
+  // Afterwards the card is read back in and goes in again (a restart, as
+  // after swapping the card on the device).
+  var sdOverlay = document.getElementById('sdoverlay'), sdFrame = document.getElementById('sdframe');
+  document.getElementById('sdmanage').addEventListener('click', function () {
+    if (!ready) return;
+    Module.ccall('chg_web_sd_eject', 'number', [], []);
+    FS.syncfs(false, function () {
+      sdFrame.src = 'sdcard.html?card=chgame&embed=1&v=' + BUILD_ID;
+      sdOverlay.hidden = false;
+    });
+  });
+  function closeManager() {
+    if (sdOverlay.hidden) return;
+    sdOverlay.hidden = true;
+    sdFrame.src = 'about:blank';
+    FS.syncfs(true, function () {
+      Module.ccall('chg_web_sd_reinsert', 'number', [], []);
+      setStatus('microSD card back in');
+      Module.canvas.focus();
+    });
+  }
+  window.addEventListener('message', function (e) {
+    if (e.origin === location.origin && e.data && e.data.type === 'sd-manager-done') closeManager();
+  });
+  sdOverlay.addEventListener('click', function (e) { if (e.target === sdOverlay) closeManager(); });
 
 
   // ---- the microSD card ----
@@ -115,7 +262,7 @@
     Promise.all(list.map(function (f) { return f.arrayBuffer(); })).then(function (bufs) {
       list.forEach(function (f, i) {
         var rel = (f.webkitRelativePath || f.name).replace(/\\/g, '/');
-        var path = '/sdcard/' + rel;
+        var path = SD + '/' + rel;
         mkdirs(path.substring(0, path.lastIndexOf('/')));
         FS.writeFile(path, new Uint8Array(bufs[i]));
       });
@@ -150,13 +297,11 @@
 
   document.getElementById('sdclear').addEventListener('click', function () {
     if (!ready || !confirm('Delete every file on the emulated microSD card?')) return;
-    (function rm(dir) {
-      FS.readdir(dir).forEach(function (n) {
-        if (n === '.' || n === '..') return;
-        var p = dir + '/' + n;
-        if (FS.isDir(FS.stat(p).mode)) { rm(p); FS.rmdir(p); } else FS.unlink(p);
-      });
-    })('/sdcard');
+    // out first, so nothing the program still had to write lands back on it
+    Module.ccall('chg_web_sd_eject', 'number', [], []);
+    emptyDir(SD);
+    // and forget which ?sd= filled it: a link with ?sd= fills it again
+    try { FS.unlink(SOURCE); } catch (e) {}
     FS.syncfs(false, function () {
       Module.ccall('chg_web_sd_reinsert', 'number', [], []);
       setStatus('The microSD card is empty');

@@ -137,6 +137,21 @@ empty or holding a folder's files. In the browser the card is kept in the
 browser, with buttons to add files or a folder, empty it, and download it as
 an image.
 
+**Manage…** opens the card manager (`sdcard.html?card=chgame`, also usable on
+its own). The card comes out of the emulator, and the game pauses, while it is
+open. It lists the card's folders and files. Files download one at a time, a
+folder or the whole card as a `.zip`. Files, folders, a `.zip` or a FAT card
+image can be uploaded (or dropped on the list) into the folder shown. Folders
+can be made, and files and folders deleted. **Done** puts the card back in.
+
+`?sd=card.zip` or `?sd=card.img` (a file beside the page or a URL) fills the
+card from a zip file or a FAT12/16/32 card image before the first program
+starts. It does so once: as long as that file stays the same, later visits
+keep what the programs wrote to the card. Emptying the card makes the next
+visit fill it again. Without `?sd=`, a `sdcard.zip` (or else a `sdcard.img`)
+beside the page is used the same way. The page only asks the server for the
+file's size and date on each visit, and downloads it only when they changed.
+
 FileBrowser needs Arduino's `SD` library (`arduino-cli lib install SD`);
 `tools/build_roms.sh` builds it against a copy with the CH32 pin-map fix.
 
