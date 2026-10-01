@@ -20,6 +20,8 @@ add_library(chgame_core STATIC
     src/st7735.c
     src/audio.c
     src/loader.c
+    src/sdspi.c
+    src/sdcard.c
     src/bootloader_image.c
 )
 target_include_directories(chgame_core PUBLIC src)
@@ -50,6 +52,7 @@ if(EMSCRIPTEN)
     target_link_options(CHGame_Emulator PRIVATE
         -sUSE_SDL=3
         -sALLOW_MEMORY_GROWTH=1
+        -sSTACK_SIZE=1048576
         -sFORCE_FILESYSTEM=1
         -lidbfs.js
         -sEXPORTED_RUNTIME_METHODS=FS,ccall

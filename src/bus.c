@@ -9,6 +9,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "machine.h"
+#include "sdspi.h"
 
 #define PERIPH_WS 0     /* measured: peripheral loads and stores cost what RAM ones do */
 
@@ -391,11 +392,27 @@ static void spi_deliver(ChgMachine *m, uint16_t frame)
             st7735_byte(&m->lcd, dc, b);
         }
     }
-    /* MISO floats high: nothing on this board answers the display */
+    /* The microSD card answers on MISO while its CS (PB11) is low; otherwise
+       MISO floats high (the display never answers). A card that sees CS go
+       high drops what it was saying. */
+    uint16_t miso = (m->spi.ctlr1 & SPI_DFF) ? 0xffff : 0xff;
+    const bool sd_sel = !gpio_pin(m, 1, 11);
+    if (sd_sel) {
+        if (m->spi.ctlr1 & SPI_DFF) {
+            const uint8_t hi = sdspi_xfer(&m->sdspi, m->sd, (uint8_t)(frame >> 8));
+            const uint8_t lo = sdspi_xfer(&m->sdspi, m->sd, (uint8_t)frame);
+            miso = (uint16_t)(hi << 8 | lo);
+        } else {
+            miso = sdspi_xfer(&m->sdspi, m->sd, (uint8_t)frame);
+        }
+    } else if (m->sd_selected) {
+        sdspi_deselect(&m->sdspi);
+    }
+    m->sd_selected = sd_sel;
     if (m->spi.rx_full)
         m->spi.statr_sticky |= 0x40;    /* OVR */
     m->spi.rx_full = true;
-    m->spi.rx_data = (m->spi.ctlr1 & SPI_DFF) ? 0xffff : 0xff;
+    m->spi.rx_data = miso;
 }
 
 static void dma_flag(ChgMachine *m, int ch, uint32_t flags)

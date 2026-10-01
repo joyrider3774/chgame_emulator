@@ -18,6 +18,7 @@
 #include "machine.h"
 #include "loader.h"
 #include "audio.h"
+#include "sdcard.h"
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -44,6 +45,8 @@ static const char *help_text[] = {
     "Esc              quit",
     "",
     "Drop a .bin, .hex or .elf on the window",
+    "microSD: the folder sdcard next to the emulator,",
+    "  or --sd folder|card.img (made if missing)",
 };
 
 /* What the F9 overlay shows, measured over the last second */
@@ -79,6 +82,9 @@ typedef struct {
     uint8_t pad_buttons;
     bool stats;
     Stats st;
+    char sd_path[1024];     /* the microSD card: a folder or an image file, "" for none */
+    uint32_t sd_mb;
+    Uint64 sd_synced;
 } App;
 
 static void show_message(App *app, const char *fmt, ...)
@@ -100,10 +106,40 @@ static void write_save(App *app)
     }
 }
 
+/* What the program wrote to the card goes back into its folder (an image
+   file is written in place, this just flushes it) */
+static void sync_sd(App *app)
+{
+    if (app->m->sd && sdcard_sync(app->m->sd)) {
+#ifdef __EMSCRIPTEN__
+        EM_ASM(FS.syncfs(false, function(err) {}););
+#endif
+    }
+    app->sd_synced = SDL_GetTicksNS();
+}
+
+/* The card goes in: a folder (made if missing) or an image file (made,
+   empty, if missing) */
+static void insert_sd(App *app)
+{
+    if (app->m->sd || !app->sd_path[0]) return;
+    /* a path with an extension is an image file, anything else a folder */
+    const char *dot = SDL_strrchr(app->sd_path, '.');
+    const char *slash = SDL_strrchr(app->sd_path, '/');
+    const char *bslash = SDL_strrchr(app->sd_path, '\\');
+    if (bslash > slash) slash = bslash;
+    if (!dot || (slash && dot < slash)) SDL_CreateDirectory(app->sd_path);
+    char err[512];
+    app->m->sd = sdcard_open(app->sd_path, app->sd_mb, err, sizeof err);
+    if (!app->m->sd) show_message(app, "SD card: %s", err);
+}
+
 static bool load_program(App *app, const char *path)
 {
     char err[256];
     write_save(app);
+    insert_sd(app);
+    sync_sd(app);
     if (!chg_load_program(app->m, path, err, sizeof err)) {
         show_message(app, "%s", err);
         return false;
@@ -144,6 +180,28 @@ static App *web_app;
 EMSCRIPTEN_KEEPALIVE int chg_web_load(const char *path)
 {
     return web_app && load_program(web_app, path);
+}
+
+/* The page changed the files in /sdcard: the card comes out (what the program
+   wrote goes into the folder first), goes back in as the folder is now, and
+   the CHGame restarts, as after swapping the card on the device */
+EMSCRIPTEN_KEEPALIVE int chg_web_sd_reinsert(void)
+{
+    if (!web_app) return 0;
+    sdcard_close(web_app->m->sd);
+    web_app->m->sd = NULL;
+    insert_sd(web_app);
+    if (web_app->loaded) chg_reset(web_app->m, true);
+    return web_app->m->sd != NULL;
+}
+
+/* Writes what is on the card to 'out' as a card image, for download */
+EMSCRIPTEN_KEEPALIVE int chg_web_sd_image(const char *out)
+{
+    if (!web_app) return 0;
+    sync_sd(web_app);
+    char err[256];
+    return sdcard_make_image(out, web_app->sd_path, 0, err, sizeof err);
 }
 #endif
 
@@ -264,18 +322,31 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     EM_ASM(
         FS.mkdir('/saves');
         FS.mount(IDBFS, {}, '/saves');
+        FS.mkdir('/sdcard');
+        FS.mount(IDBFS, {}, '/sdcard');
     );
+    /* the card is a folder in IndexedDB, read in by the page before the
+       first program: it goes in with that program */
+    SDL_strlcpy(app->sd_path, "/sdcard", sizeof app->sd_path);
+#else
+    /* the card defaults to the folder "sdcard" next to the emulator */
+    const char *base = SDL_GetBasePath();
+    SDL_snprintf(app->sd_path, sizeof app->sd_path, "%ssdcard", base ? base : "");
 #endif
 
-    for (int i = 1; i < argc; i++)
-        if (!SDL_strcmp(argv[i], "--no-bootloader"))
-            chg_use_bootloader = false;
+    const char *program = NULL;
     for (int i = 1; i < argc; i++) {
-        if (argv[i][0] != '-') {
-            load_program(app, argv[i]);
-            break;
-        }
+        if (!SDL_strcmp(argv[i], "--no-bootloader")) chg_use_bootloader = false;
+        else if (!SDL_strcmp(argv[i], "--sd") && i + 1 < argc) SDL_strlcpy(app->sd_path, argv[++i], sizeof app->sd_path);
+        else if (!SDL_strcmp(argv[i], "--sd-size") && i + 1 < argc) app->sd_mb = (uint32_t)SDL_atoi(argv[++i]);
+        else if (!SDL_strcmp(argv[i], "--no-sd")) app->sd_path[0] = 0;
+        else if (argv[i][0] != '-' && !program) program = argv[i];
     }
+#ifndef __EMSCRIPTEN__
+    insert_sd(app);
+#endif
+    if (program) load_program(app, program);
+    app->sd_synced = SDL_GetTicksNS();
     if (!app->loaded)
         show_message(app, "Drop a CHGame .bin here, or press F3");
     app->last_ticks = SDL_GetTicksNS();
@@ -388,6 +459,9 @@ static void emulate(App *app)
     /* saves go to disk a second after the program stops writing flash */
     if (m->flash_written && m->cycles - m->flash_write_cycle > CHG_HCLK)
         write_save(app);
+    /* a folder card is written back every few seconds */
+    if (m->sd && SDL_GetTicksNS() - app->sd_synced > 3000000000ull)
+        sync_sd(app);
 }
 
 static void draw_text(SDL_Renderer *r, float x, float y, const char *s)
@@ -522,6 +596,8 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
     App *app = appstate;
     if (!app) return;
     write_save(app);
+    sdcard_close(app->m->sd);
+    app->m->sd = NULL;
     SDL_free(app->m);
     SDL_free(app);
 }

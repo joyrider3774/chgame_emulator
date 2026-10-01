@@ -7,7 +7,7 @@
  *                    A PB1, B PB6, SELECT PB7, START PB8 - all to GND
  *   buzzer           PB10 (TIM1 CH2 with the partial remap, or plain GPIO)
  *   LED              PB9, active high
- *   microSD          SPI1, CS PB11 (not emulated)
+ *   microSD          SPI1, CS PB11 (sdspi.c: an SDHC card in SPI mode)
  *
  * Every module keeps its state in here so a machine is one plain struct that
  * can be reset, and later snapshotted, as a unit.
@@ -15,6 +15,7 @@
 #ifndef CHG_MACHINE_H
 #define CHG_MACHINE_H
 
+#include "sdspi.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -255,6 +256,9 @@ typedef struct ChgMachine {
     uint32_t afio_pcfr1, afio_exticr[2], afio_ctlr;
     uint32_t rcc[11];
     ChgSpi spi;
+    struct SdCard *sd;      /* the card in the slot, NULL for none (the front end owns it) */
+    ChgSdSpi sdspi;
+    bool sd_selected;
     ChgDma dma;
     ChgTimer tim[3];        /* TIM1, TIM2, TIM3 */
     ChgFlashCtl flashctl;

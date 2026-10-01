@@ -31,6 +31,13 @@
   <input id="url" type="url" placeholder="or a URL to a .bin / .hex / .elf">
   <button id="load">Load</button>
 </header>
+<header>
+  microSD:
+  <label class="button">Add files…<input id="sdfiles" type="file" multiple></label>
+  <label class="button">Add a folder…<input id="sddir" type="file" webkitdirectory></label>
+  <button id="sdimage">Download as image</button>
+  <button id="sdclear">Empty it</button>
+</header>
 <div id="status">Loading…</div>
 <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
 <p class="keys">Arrows: d-pad · X / Z: A / B · Enter / Right Shift: START / SELECT ·
@@ -83,6 +90,72 @@
       });
     }],
   };
+
+
+  // ---- the microSD card ----
+
+  function mkdirs(path) {
+    var parts = path.split('/').filter(Boolean), at = '';
+    for (var i = 0; i < parts.length; i++) {
+      at += '/' + parts[i];
+      try { FS.mkdir(at); } catch (e) {}
+    }
+  }
+
+  // the files go in, the card is taken out and put back, and the CHGame restarts
+  function addToSd(files) {
+    if (!ready || !files.length) return;
+    var list = Array.prototype.slice.call(files);
+    Promise.all(list.map(function (f) { return f.arrayBuffer(); })).then(function (bufs) {
+      list.forEach(function (f, i) {
+        var rel = (f.webkitRelativePath || f.name).replace(/\\/g, '/');
+        var path = '/sdcard/' + rel;
+        mkdirs(path.substring(0, path.lastIndexOf('/')));
+        FS.writeFile(path, new Uint8Array(bufs[i]));
+      });
+      FS.syncfs(false, function () {
+        Module.ccall('chg_web_sd_reinsert', 'number', [], []);
+        setStatus(list.length + ' file(s) added to the microSD card');
+        Module.canvas.focus();
+      });
+    });
+  }
+  document.getElementById('sdfiles').addEventListener('change', function (e) { addToSd(e.target.files); e.target.value = ''; });
+  document.getElementById('sddir').addEventListener('change', function (e) { addToSd(e.target.files); e.target.value = ''; });
+
+  document.getElementById('sdimage').addEventListener('click', function () {
+    if (!ready) return;
+    setStatus('Making the card image…');
+    setTimeout(function () {
+      if (!Module.ccall('chg_web_sd_image', 'number', ['string'], ['/sdcard.img'])) {
+        setStatus('Could not make the card image');
+        return;
+      }
+      var data = FS.readFile('/sdcard.img');
+      FS.unlink('/sdcard.img');
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([data], { type: 'application/octet-stream' }));
+      a.download = 'chgame_sdcard.img';
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 10000);
+      setStatus('chgame_sdcard.img: ' + Math.round(data.length / 1048576) + ' MB, FAT32, for a card of at least that size');
+    }, 10);
+  });
+
+  document.getElementById('sdclear').addEventListener('click', function () {
+    if (!ready || !confirm('Delete every file on the emulated microSD card?')) return;
+    (function rm(dir) {
+      FS.readdir(dir).forEach(function (n) {
+        if (n === '.' || n === '..') return;
+        var p = dir + '/' + n;
+        if (FS.isDir(FS.stat(p).mode)) { rm(p); FS.rmdir(p); } else FS.unlink(p);
+      });
+    })('/sdcard');
+    FS.syncfs(false, function () {
+      Module.ccall('chg_web_sd_reinsert', 'number', [], []);
+      setStatus('The microSD card is empty');
+    });
+  });
 
   document.getElementById('file').addEventListener('change', function (e) {
     var f = e.target.files[0];

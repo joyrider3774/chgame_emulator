@@ -38,6 +38,9 @@ void chg_reset(ChgMachine *m, bool power_on)
         }
     }
     bus_reset(m, power_on);
+    /* the card powers with the board; a warm reset of the MCU leaves it be */
+    if (power_on) sdspi_reset(&m->sdspi);
+    m->sd_selected = false;
     st7735_reset(&m->lcd);
     m->lcd.rst_level = true;
     cpu_reset(m);

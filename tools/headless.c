@@ -11,6 +11,7 @@
 #include <string.h>
 #include <time.h>
 #include "machine.h"
+#include "sdcard.h"
 #include "loader.h"
 #include "audio.h"
 
@@ -60,8 +61,20 @@ static uint8_t btn_by_name(const char *s)
 
 int main(int argc, char **argv)
 {
+    if (argc >= 3 && !strcmp(argv[1], "--sd-make")) {
+        /* chg_headless --sd-make card.img [folder] [MB]: a card image */
+        const char *folder = argc >= 4 && atoi(argv[3]) == 0 ? argv[3] : NULL;
+        char err[512];
+        if (!sdcard_make_image(argv[2], folder, (uint32_t)atoi(argv[argc - 1]), err, sizeof err)) {
+            fprintf(stderr, "%s\n", err);
+            return 1;
+        }
+        return 0;
+    }
     if (argc < 2) {
-        fprintf(stderr, "usage: chg_headless game.bin [seconds] [out.ppm] [--press btn@sec[:dur]]... [--shots prefix] [--save]\n");
+        fprintf(stderr, "usage: chg_headless game.bin [seconds] [out.ppm] [--press btn@sec[:dur]]... "
+                        "[--shots prefix] [--save] [--sd folder|card.img]\n"
+                        "       chg_headless --sd-make card.img [folder] [MB]\n");
         return 2;
     }
     static ChgMachine m;
@@ -104,6 +117,12 @@ int main(int argc, char **argv)
             /* handled before loading */
         } else if (!strcmp(argv[i], "--save")) {
             save = true;
+        } else if (!strcmp(argv[i], "--sd") && i + 1 < argc) {
+            /* the microSD card: a folder or an image (made, empty, if missing) */
+            if (!(m.sd = sdcard_open(argv[++i], 0, err, sizeof err))) {
+                fprintf(stderr, "SD card: %s\n", err);
+                return 1;
+            }
         } else if (!strcmp(argv[i], "--shots") && i + 1 < argc) {
             shots = argv[++i];
         } else if (pos == 0) {
@@ -174,5 +193,6 @@ int main(int argc, char **argv)
         printf("saved %s\n", save_path);
     st7735_render(&m.lcd, px);
     write_ppm(out, px);
+    sdcard_close(m.sd);
     return 0;
 }

@@ -56,7 +56,12 @@ disagree, the hardware is right and the emulator has a bug.
 
 USB is present as registers only (the core's CDC code runs, no host ever
 enumerates it, so `Serial` output is dropped exactly as on a board with no PC
-attached). The microSD slot is not emulated.
+attached).
+
+* **The microSD card** — an SDHC card in SPI mode on SPI1 with its chip select
+  on PB11, sharing the bus with the display as on the board (`src/sdspi.c`).
+  Reads, writes, multi-block streaming over DMA. CHStlView, CHSpriteView and
+  FileBrowser run with it.
 
 ## Building
 
@@ -116,9 +121,28 @@ or drop a file on the window, or press F3.
 The game fps in the overlay is counted at the display: a new frame is a write
 window that starts higher up the screen than the one before it.
 
+### The microSD card
+
+```sh
+./build/CHGame_Emulator game.bin --sd folder|card.img [--sd-size MB]   # --no-sd: an empty slot
+```
+
+By default the card is the folder `sdcard` next to the emulator. A folder's
+files go on a FAT32 card built in memory; what the program writes, creates or
+deletes goes back into the folder every few seconds and when the emulator
+closes. An image file is a whole card (as a card reader dumps it), read and
+written in place, and is created empty (256 MB, or `--sd-size`) when it does
+not exist. `chg_headless --sd-make card.img [folder] [MB]` writes a card image,
+empty or holding a folder's files. In the browser the card is kept in the
+browser, with buttons to add files or a folder, empty it, and download it as
+an image.
+
+FileBrowser needs Arduino's `SD` library (`arduino-cli lib install SD`);
+`tools/build_roms.sh` builds it against a copy with the CH32 pin-map fix.
+
 ## Tools
 
-* `chg_headless game.bin [seconds] [out.ppm] [--press btn@sec[:dur]]... [--save]`
+* `chg_headless game.bin [seconds] [out.ppm] [--press btn@sec[:dur]]... [--save] [--sd folder|card.img]`
   runs without a window and reports how fast it ran, for testing and profiling.
 * `xw_test` checks the XW decoder (`ctest` runs it).
 

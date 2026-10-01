@@ -26,6 +26,32 @@ winpath() { cygpath -w "$1" 2>/dev/null || echo "$1"; }
 
 mkdir -p "$OUT" "$WORK"
 
+# FileBrowser uses Arduino's SD library, which stops at "#error Architecture
+# or board not supported" on the CH32. A copy in the build folder gets the
+# CH32 pin map (the fix CHSDtoUSB and CHStlView carry); the installed
+# library is left alone. Install it once with: arduino-cli lib install SD
+SDLIB=$("$CLI" --config-file "$(winpath "$CONFIG")" lib list SD --format json 2>/dev/null |
+        python -c "import json,sys; d=json.load(sys.stdin); l=d.get('installed_libraries',d) if isinstance(d,dict) else d; print(l[0]['library']['install_dir'] if l else '')" 2>/dev/null)
+if [ -n "$SDLIB" ] && [ -d "$SDLIB" ]; then
+    rm -rf "$WORK/libs/SD" && mkdir -p "$WORK/libs" && cp -r "$SDLIB" "$WORK/libs/SD"
+    python - "$WORK/libs/SD/src/utility/Sd2PinMap.h" <<'PY'
+import sys
+p = sys.argv[1]
+t = open(p, encoding="utf-8").read()
+if "ARDUINO_ARCH_CH32" not in t:
+    fix = ("#if defined(ARDUINO_ARCH_CH32) || defined(CH32X035)\n"
+           "#ifndef Sd2PinMap_h\n#define Sd2PinMap_h\n#include <Arduino.h>\n"
+           "uint8_t const SS_PIN = PIN_SPI_SS;\nuint8_t const MOSI_PIN = PIN_SPI_MOSI;\n"
+           "uint8_t const MISO_PIN = PIN_SPI_MISO;\nuint8_t const SCK_PIN = PIN_SPI_SCK;\n"
+           "#endif\n#elif defined(__arm__)")
+    t = t.replace("#if defined(__arm__)", fix, 1)
+    open(p, "w", encoding="utf-8").write(t)
+PY
+    export SDLIB_OPT="$WORK/libs/SD"
+else
+    echo "Arduino SD library not installed: FileBrowser will not build (arduino-cli lib install SD)"
+fi
+
 # group|name|sketch folder|board options|defines
 {
     # README: keep the defaults, it only fits at -Os with Peripherals: Game
@@ -71,6 +97,9 @@ EOF
     log="$bp.log"
     mkdir -p "$bp" "$OUT/$group"
     set -- --config-file "$(winpath "$CONFIG")" compile --fqbn "$BOARD:$opts" --build-path "$(winpath "$bp")"
+    if [ -n "$SDLIB_OPT" ]; then
+        set -- "$@" --library "$(winpath "$SDLIB_OPT")"
+    fi
     if [ -n "$defines" ]; then
         set -- "$@" --build-property "compiler.c.extra_flags=$defines" --build-property "compiler.cpp.extra_flags=$defines"
     fi

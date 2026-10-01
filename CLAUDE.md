@@ -10,13 +10,13 @@ traps already fallen into.
 A real emulator (not a simulator) for Kevin Bates' **CHGame** handheld:
 WCH CH32X035G8U6 (QingKe V4C RISC-V, RV32IMAC + WCH "XW" extension, 48 MHz,
 62 KB flash, 20 KB SRAM), ST7735S 128x128 on SPI1, 8 buttons, piezo on PB10,
-LED on PB9, microSD (not emulated). It executes the compiled Arduino `.bin`
+LED on PB9, microSD (SPI mode, PB11 CS). It executes the compiled Arduino `.bin`
 exactly as the device does, booting through the real bootloader. C11 + SDL3,
 native and Emscripten from the same source.
 
 **The owner's priorities, in order:** emulator speed, then screen, CPU timing
 and buzzer accuracy. High-level shortcuts that simulate an API instead of the
-hardware are not wanted: model the hardware. The SD card is deliberately out of scope for now.
+hardware are not wanted: model the hardware.
 
 Modelled on the owner's earlier TinyJoypad emulator
 (`c:/github/Tinyjoypad_Emulator`, simavr + SDL3), but the CPU here is our own.
@@ -33,6 +33,8 @@ Modelled on the owner's earlier TinyJoypad emulator
 | `src/audio.c` | buzzer pin integrated exactly per audio sample |
 | `src/loader.c` | `.bin`/`.hex`/`.elf`, bootloader install + metadata page, `.sav` files |
 | `src/bootloader_image.c` | the real CHGame bootloader (MIT), generated from the board package `.bin` — do not edit |
+| `src/sdspi.c` | the microSD card in SPI mode: command frames, R1/R3/R7, data tokens, CMD18 streaming, CMD24/25 writes. Selected by PB11 low in `spi_deliver()` (bus.c) |
+| `src/sdcard.c` | card storage, image file or folder built into an in-memory FAT32 card and synced back, formatter, `sdcard_make_image` |
 | `src/main.c` | SDL3 front end using SDL main callbacks (works under Emscripten unchanged) |
 | `web/shell.html` | page around the web build: file picker, URL box, `?rom=`, `games.json` menu |
 | `tools/headless.c` | `chg_headless`: run without a window, report speed, dump screen/RAM/registers |
@@ -187,6 +189,15 @@ the `ALIGN4` macro in `bench.S`), and use `.option norelax`.
 - Parallel arduino-cli builds occasionally fail silently (shared library
   folder on OneDrive); `build_roms.sh` retries once.
 
+## microSD
+
+Test programs: CHStlView (lists `.STL` with triangle counts, renders them),
+CHSpriteView (streams `/FIRE/*.BIN` at ~280 fps through DMA), FileBrowser
+(text, GIF), `tests/sketches/chg_sdtest` (mkdir, a 3000-byte write over
+several blocks, read back; results in `sd_result[]` for `--mem`). Sample
+content: `c:/github/CHStlView/sample`, `c:/github/CHSpriteView/sample/FIRE`.
+Card latency is not modelled (blocks are ready at once); SPI timing is.
+
 ## Working conventions and traps
 
 - Code style: C11, 4-space indent, explanatory block comments about *why*
@@ -212,5 +223,4 @@ the `ALIGN4` macro in `bench.S`), and use `.option norelax`.
 - DMA start latency: chg_bench test 3 is 0.9% fast vs hardware.
 - USB CDC host emulation, so `Serial` output (e.g. `CHGAME_TIMING` frame
   reports) becomes visible.
-- microSD card emulation (image file on SPI with PB11 CS) when the owner wants it.
 - Settings persistence (volume, window size) like the TinyJoypad emulator.
