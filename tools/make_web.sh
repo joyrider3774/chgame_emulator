@@ -39,7 +39,8 @@ for page in (html, "build_web/sdcard.html"):
     t = re.sub(r"""BUILD_ID\s*=\s*["'][^"']*["']""", 'BUILD_ID="%s"' % build, t)
     t = re.sub(r'src="?CHGame_Emulator\.js(\?v=\w+)?"?>', 'src="CHGame_Emulator.js?v=%s">' % build, t)
     t = re.sub(r'src="?sdtools\.js(\?v=\w+)?"?>', 'src="sdtools.js?v=%s">' % build, t)
-    open(page, "w", encoding="utf-8").write(t)
+    # newline="\n": Python on Windows would otherwise write CRLF line ends
+    open(page, "w", encoding="utf-8", newline="\n").write(t)
 print("build", build)
 PY
 
