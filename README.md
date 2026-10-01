@@ -54,14 +54,14 @@ disagree, the hardware is right and the emulator has a bug.
   metadata page at 0xF700 the way the uploader does, and the bootloader checks
   the image's CRC and jumps to it. `--no-bootloader` starts at 0x3000 instead.
 
-USB is present as registers only (the core's CDC code runs, no host ever
-enumerates it, so `Serial` output is dropped exactly as on a board with no PC
-attached).
-
 * **The microSD card** — an SDHC card in SPI mode on SPI1 with its chip select
   on PB11, sharing the bus with the display as on the board (`src/sdspi.c`).
   Reads, writes, multi-block streaming over DMA. CHStlView, CHSpriteView and
   FileBrowser run with it.
+  
+USB is present as registers only (the core's CDC code runs, no host ever
+enumerates it, so `Serial` output is dropped exactly as on a board with no PC
+attached).
 
 ## Building
 
