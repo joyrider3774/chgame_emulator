@@ -93,6 +93,8 @@ int main(int argc, char **argv)
     double seconds = 5;
     const char *out = "screen.ppm";
     const char *shots = NULL;
+    const char *wav_path = NULL;
+    bool no_piezo = true;      /* the bare pin signal; --piezo for the piezo filter */
     bool save = false;
     uint32_t mem_addr = 0, mem_count = 0;
     Press presses[64];
@@ -125,6 +127,12 @@ int main(int argc, char **argv)
             }
         } else if (!strcmp(argv[i], "--shots") && i + 1 < argc) {
             shots = argv[++i];
+        } else if (!strcmp(argv[i], "--wav") && i + 1 < argc) {
+            wav_path = argv[++i];
+        } else if (!strcmp(argv[i], "--no-piezo")) {
+            no_piezo = true;
+        } else if (!strcmp(argv[i], "--piezo")) {
+            no_piezo = false;
         } else if (pos == 0) {
             seconds = atof(argv[i]);
             pos++;
@@ -138,8 +146,16 @@ int main(int argc, char **argv)
     if (save && chg_load_save(&m, save_path))
         chg_reset(&m, true);
     chg_audio_init(&audio, 48000, m.cycles);
+    audio.piezo = !no_piezo;
     static float samples[48000];
     double peak = 0;
+    /* --wav: the sound as the front end would play it, 48 kHz 16-bit mono */
+    FILE *wav = wav_path ? fopen(wav_path, "wb") : NULL;
+    uint32_t wav_samples = 0;
+    if (wav) {
+        static const uint8_t blank[44] = { 0 };
+        fwrite(blank, 1, 44, wav);
+    }
 
     const uint64_t step = CHG_HCLK / 100;  /* 10 ms slices, as a front end would */
     const uint64_t total = (uint64_t)(seconds * CHG_HCLK);
@@ -156,6 +172,15 @@ int main(int argc, char **argv)
         chg_run(&m, m.cycles + step);
         const int n = chg_audio_render(&audio, &m, samples, 48000);
         for (int i = 0; i < n; i++) if (samples[i] > peak) peak = samples[i];
+        if (wav) {
+            for (int i = 0; i < n; i++) {
+                float v = samples[i] * 32767.0f;
+                v = v > 32767.0f ? 32767.0f : v < -32768.0f ? -32768.0f : v;
+                const int16_t s16 = (int16_t)v;
+                fwrite(&s16, 2, 1, wav);
+            }
+            wav_samples += (uint32_t)n;
+        }
         if (shots && (int)t != shot) {
             shot = (int)t;
             char name[512];
@@ -165,6 +190,19 @@ int main(int argc, char **argv)
         }
     }
     const double wall = now_s() - t0;
+    if (wav) {
+        /* the RIFF header, now the length is known */
+        uint8_t h[44];
+        const uint32_t bytes = wav_samples * 2;
+        const uint32_t fields[] = { 36 + bytes, 16, 1 | 1u << 16, 48000, 48000 * 2, 2 | 16u << 16, bytes };
+        memcpy(h, "RIFF", 4); memcpy(h + 8, "WAVEfmt ", 8); memcpy(h + 36, "data", 4);
+        const int at[] = { 4, 16, 20, 24, 28, 32, 40 };
+        for (int k = 0; k < 7; k++)
+            for (int b = 0; b < 4; b++) h[at[k] + b] = (uint8_t)(fields[k] >> (8 * b));
+        fseek(wav, 0, SEEK_SET);
+        fwrite(h, 1, 44, wav);
+        fclose(wav);
+    }
     (void)instr_est;
     printf("emulated %.2f s in %.3f s wall: %.1fx real time (%.0f MHz equivalent)\n",
            seconds, wall, seconds / wall, seconds * CHG_HCLK / wall / 1e6);

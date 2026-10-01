@@ -756,9 +756,18 @@ static void tim_write(ChgMachine *m, int n, uint32_t off, uint32_t v)
     case 0x0c: t->dmaintenr = (uint16_t)v; break;
     case 0x10: t->intfr &= (uint16_t)v; break;
     case 0x14:
-        if (v & 1) {                /* UG: the counter restarts, shadows load */
-            t->cnt_base = 0;
-            t->cycle_base = m->cycles;
+        if (v & 1) {
+            /* UG: the shadow registers load (here they are always current),
+               and the counter restarts - but only while it runs. Measured on
+               a CHGame (2026-10-01): stopped at CNT 250, UG leaves 250 and
+               the count carries on from there once started; running, UG
+               takes it from 5 to 0. CHChess's tone() stops, reloads, UGs and
+               starts every millisecond of a sweep, and relies on this for a
+               tone without a click each millisecond. */
+            if (t->ctlr1 & 1) {
+                t->cnt_base = 0;
+                t->cycle_base = m->cycles;
+            }
             if (!(t->ctlr1 & 0x04))  /* URS: an update from UG raises the flag unless URS */
                 t->intfr |= 1;
         }

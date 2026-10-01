@@ -1,8 +1,9 @@
 #!/bin/sh
 # Builds the test ROMs in roms/ from their sources in c:/github with the
 # arduino-cli that ships with Arduino IDE 2, using the IDE's own settings
-# (~/.arduinoIDE/arduino-cli.yaml), so the board package and the libraries
-# (CHGfx in the sketchbook) are exactly the ones the IDE builds with.
+# (~/.arduinoIDE/arduino-cli.yaml): the board package (0.2.4 or later) and
+# the sketchbook's libraries are the IDE's, except CHGfx, which is always the
+# latest (the c:/github/CHGfx clone, pulled first).
 #
 #   roms/bateske/        Kevin Bates' CHGame games and tools
 #   roms/chgfx/          the CHGfx library's examples
@@ -25,6 +26,9 @@ BOARD=CHGame:ch32v:CHGame
 winpath() { cygpath -w "$1" 2>/dev/null || echo "$1"; }
 
 mkdir -p "$OUT" "$WORK"
+
+# the latest CHGfx (CHChess needs 1.3.0); board package: 0.2.4 or later
+git -C "$GITHUB/CHGfx" pull -q 2>/dev/null
 
 # FileBrowser uses Arduino's SD library, which stops at "#error Architecture
 # or board not supported" on the CH32. A copy in the build folder gets the
@@ -62,6 +66,8 @@ fi
     echo "bateske|CHSpriteView|$GITHUB/CHSpriteView|opt=o2std|"
     echo "bateske|CH32Doom|$GITHUB/CH32Doom|opt=osstd|"
     echo "bateske|FileBrowser|$GITHUB/FileBrowser|opt=osstd|"
+    # README: needs LTO to fit, and the C library's nano variant
+    echo "bateske|CHChess|$GITHUB/CHChess|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
     echo "bateske|CHSDtoUSB|$GITHUB/CHSDtoUSB|opt=osstd|"
     echo "poevoid|CHGame-Ponglike|$GITHUB/CHGame-Ponglike|opt=osstd|"
     for ex in "$GITHUB"/CHGfx/examples/*/; do
@@ -75,16 +81,21 @@ g = sys.argv[1]
 name = os.path.basename(g)[:-len("_embedded")]
 script = os.path.join(g, "tools", "build_releases.py")
 targets = []
+# the board options the release script builds the CHGame target with
+opts = "periph=game"
 if os.path.exists(script):
     for line in open(script, encoding="utf-8"):
         m = re.match(r'\s*\("CHGame",\s*"([^"]*)",\s*(\{.*?\})\s*\)', line)
         if m:
             targets.append((m.group(1), eval(m.group(2), {"__builtins__": {}})))
+        m = re.search(r'"fqbn":\s*"CHGame:ch32v:CHGame:([^"]*)"', line)
+        if m:
+            opts = m.group(1)
 if not targets:
     targets = [("", {})]
 for suffix, defines in targets:
     flags = " ".join("-D%s=%s" % (k, v) for k, v in defines.items())
-    print("joyrider3774|%s%s|%s|periph=game|%s" % (name, suffix, os.path.join(g, "source", os.path.basename(g)), flags))
+    print("joyrider3774|%s%s|%s|%s|%s" % (name, suffix, os.path.join(g, "source", os.path.basename(g)), opts, flags))
 PY
     done
 } > "$WORK/list.txt"
@@ -99,6 +110,11 @@ EOF
     set -- --config-file "$(winpath "$CONFIG")" compile --fqbn "$BOARD:$opts" --build-path "$(winpath "$bp")"
     if [ -n "$SDLIB_OPT" ]; then
         set -- "$@" --library "$(winpath "$SDLIB_OPT")"
+    fi
+    # everything builds against the latest CHGfx (the c:/github clone, pulled
+    # above), not whichever copy the sketchbook has
+    if [ -d "$GITHUB/CHGfx" ]; then
+        set -- "$@" --library "$(winpath "$GITHUB/CHGfx")"
     fi
     if [ -n "$defines" ]; then
         set -- "$@" --build-property "compiler.c.extra_flags=$defines" --build-property "compiler.cpp.extra_flags=$defines"
@@ -122,3 +138,4 @@ first=$(head -1 "$WORK/list.txt")
 build_one "$first"
 tail -n +2 "$WORK/list.txt" | tr '\n' '\0' |
     xargs -0 -P "$JOBS" -I{} sh -c "$(declare -f winpath build_one); build_one \"\$1\"" _ {}
+

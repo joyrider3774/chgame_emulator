@@ -8,7 +8,10 @@
  * closed form, so a 20 kHz tone and a tone at a frequency that does not
  * divide the sample rate come out without aliasing and without stepping the
  * CPU a cycle at a time. A DC blocker then does what the piezo's AC coupling
- * does.
+ * does, and a filter fitted to a recording of a real CHGame what the piezo
+ * itself does: low tones much quieter, a resonance around 4-6 kHz
+ * (piezo_filter.c, tools/fit_piezo.py). It is off by default: the bare pin
+ * signal, unless the front end switches the filter on (F7, --piezo).
  */
 #include <math.h>
 #include <string.h>
@@ -22,6 +25,7 @@ void chg_audio_init(ChgAudio *a, int rate, uint64_t now)
     a->cycles_per_sample = (double)CHG_HCLK / rate;
     a->pos = (double)now;
     a->volume = 0.5f;
+    a->piezo = false;           /* the bare pin signal unless asked for */
     a->state.cycle = now;
 }
 
@@ -59,7 +63,21 @@ int chg_audio_render(ChgAudio *a, ChgMachine *m, float *out, int max)
 
         /* AC coupling: a first order high pass at about 20 Hz */
         a->dc += (level - a->dc) * (float)(2.0 * 3.14159265 * 20.0 / a->rate);
-        out[n++] = (level - a->dc) * a->volume;
+        float v = level - a->dc;
+        /* what the piezo makes of it: its response measured on a real
+           CHGame. The filter is fitted at 48 kHz, so other rates skip it */
+        a->fir[a->fir_pos] = v;
+        if (a->piezo && a->rate == 48000) {
+            float acc = 0.0f;
+            int k = a->fir_pos;
+            for (int i = 0; i < chg_piezo_taps; i++) {
+                acc += chg_piezo_fir[i] * a->fir[k];
+                k = k ? k - 1 : chg_piezo_taps - 1;
+            }
+            v = acc;
+        }
+        a->fir_pos = a->fir_pos + 1 < chg_piezo_taps ? a->fir_pos + 1 : 0;
+        out[n++] = v * a->volume;
         a->pos = t1;
     }
     return n;

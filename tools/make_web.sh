@@ -42,7 +42,7 @@ python - <<'PY'
 import json, os
 os.chdir("build_web")
 games = []
-for group in sorted(os.listdir("roms")):
+for group in sorted(g for g in os.listdir("roms") if os.path.isdir(os.path.join("roms", g))):
     for f in sorted(os.listdir(os.path.join("roms", group))):
         if f.endswith(".bin"):
             games.append({"file": "roms/%s/%s" % (group, f), "name": "%s / %s" % (group, f[:-4])})

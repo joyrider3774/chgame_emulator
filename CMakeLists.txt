@@ -19,6 +19,7 @@ add_library(chgame_core STATIC
     src/machine.c
     src/st7735.c
     src/audio.c
+    src/piezo_filter.c
     src/loader.c
     src/sdspi.c
     src/sdcard.c

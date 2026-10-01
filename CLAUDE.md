@@ -56,7 +56,7 @@ Modelled on the owner's earlier TinyJoypad emulator
   **Always pass `--config-file ~/.arduinoIDE/arduino-cli.yaml`** — the bare
   CLI does not know the IDE's sketchbook (`OneDrive/Documenten/Arduino`,
   which holds the CHGfx library).
-- CHGame board package: `~/AppData/Local/Arduino15/packages/CHGame/` (0.2.2),
+- CHGame board package: `~/AppData/Local/Arduino15/packages/CHGame/` (0.2.4; same bootloader as 0.2.2),
   FQBN `CHGame:ch32v:CHGame` with menus `opt=osstd|o2std|...`, `periph=game|full`.
   Toolchain `riscv-none-embed-gcc 8.2.0` in `tools/` there (objdump needs
   `-M xw` to disassemble XW instructions).
@@ -166,6 +166,20 @@ the `ALIGN4` macro in `bench.S`), and use `.option norelax`.
 - **ST7735**: frame memory 132x162; the glass shows the block reached with
   MADCTL 0xC8 at column 2, row 3 (screen (x,y) = GRAM(129-x, 158-y)). MADCTL
   BGR set = correct colours on this BGR panel. 12/16/18-bit COLMOD.
+- **TIM UG only restarts a running counter**: measured on the device
+  (2026-10-01): with CEN off, SWEVGR=UG loads ATRLR/CCR but leaves CNT
+  (250 stays 250, and counting resumes from there); with CEN on, UG resets
+  CNT to 0. CHChess's `tone()` (stop, reload, UG, start every 1 ms of a
+  sweep) depends on it: with the reset every millisecond its swoops became a
+  1 kHz buzz. CHChess's own `tools/audio/host` model resets regardless, which
+  is wrong in the same way.
+- **Piezo sound**: `src/piezo_filter.c` (256-tap minimum phase FIR at 48 kHz)
+  is fitted by `tools/fit_piezo.py` to a phone recording of the device playing
+  CHChess's capture effect (`tests/sketches/chg_sfxtest`, built with CHChess's `src/audio` copied in; `roms/sfxtest_capture.bin`
+  is its build). Resonance ~5 kHz, the 500-2000 Hz tones 25-45 dB down. Off by
+  default (owner's choice): F7 / `--piezo` (front end and chg_headless) turn it on.
+  The device also adds the sweeps' 2nd harmonic (piezo non-linearity), which
+  a linear filter cannot.
 - **Buzzer**: PB10 as GPIO or TIM1 CH2 PWM (AFIO PCFR1 bits 17:15 = 1). State
   changes are logged with timestamps; `audio.c` integrates in closed form.
 - **Saves**: flash pages the program writes go to `<rom>.sav`
@@ -185,7 +199,12 @@ the `ALIGN4` macro in `bench.S`), and use `.option norelax`.
 - The owner's games' `tools/build_releases.py` list CHGame targets with defines
   (level packs); `build_roms.sh` parses them and passes the defines through
   `--build-property compiler.c(pp).extra_flags=...`. Puzzleland only fits that way.
-- FileBrowser needs an Arduino SD library that supports this core — not built.
+- FileBrowser needs Arduino's SD library: `build_roms.sh` builds it against a copy
+  with the CH32 pin-map fix (`arduino-cli lib install SD` once).
+- Everything builds with board package 0.2.4 and the latest CHGfx: `build_roms.sh`
+  pulls the `c:/github/CHGfx` clone (1.3.0) and passes it to every build, so the
+  sketchbook's older CHGfx copy is not used. CHChess needs that plus LTO
+  (`opt=oslto,rtlib=nano,periph=game,usb=uploadonly`).
 - Parallel arduino-cli builds occasionally fail silently (shared library
   folder on OneDrive); `build_roms.sh` retries once.
 

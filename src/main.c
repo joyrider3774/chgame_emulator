@@ -39,6 +39,7 @@ static const char *help_text[] = {
     "F3               open a program",
     "P  /  hold Tab   pause / fast forward",
     "+ / -            volume",
+    "F7               piezo sound / bare pin signal",
     "F9               stats overlay",
     "F10              screenshot",
     "F11, Alt+Enter   fullscreen",
@@ -81,6 +82,7 @@ typedef struct {
     SDL_Gamepad *pads[8];
     uint8_t pad_buttons;
     bool stats;
+    bool raw_sound;         /* F7: the bare pin signal instead of the piezo's sound */
     Stats st;
     char sd_path[1024];     /* the microSD card: a folder or an image file, "" for none */
     uint32_t sd_mb;
@@ -157,6 +159,7 @@ static bool load_program(App *app, const char *path)
     chg_load_save(app->m, app->save_path);
     chg_reset(app->m, true);
     chg_audio_init(&app->audio, AUDIO_RATE, app->m->cycles);
+    app->audio.piezo = !app->raw_sound;
     if (app->audio_stream) SDL_ClearAudioStream(app->audio_stream);
     app->loaded = true;
     app->paused = false;
@@ -297,6 +300,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     app->m = SDL_malloc(sizeof(ChgMachine));
     if (!app || !app->m) return SDL_APP_FAILURE;
     *appstate = app;
+    app->raw_sound = true;          /* the piezo filter is off until F7 or --piezo */
     chg_init(app->m);
 
     const int scale = 4;
@@ -314,6 +318,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     if (app->audio_stream) SDL_ResumeAudioStreamDevice(app->audio_stream);
     else SDL_Log("no audio: %s", SDL_GetError());
     chg_audio_init(&app->audio, AUDIO_RATE, 0);
+    app->audio.piezo = !app->raw_sound;
 
 #ifdef __EMSCRIPTEN__
     /* saves live in the browser's IndexedDB. The page reads them in
@@ -337,6 +342,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     const char *program = NULL;
     for (int i = 1; i < argc; i++) {
         if (!SDL_strcmp(argv[i], "--no-bootloader")) chg_use_bootloader = false;
+        else if (!SDL_strcmp(argv[i], "--no-piezo")) { app->raw_sound = true; app->audio.piezo = false; }
+        else if (!SDL_strcmp(argv[i], "--piezo")) { app->raw_sound = false; app->audio.piezo = true; }
         else if (!SDL_strcmp(argv[i], "--sd") && i + 1 < argc) SDL_strlcpy(app->sd_path, argv[++i], sizeof app->sd_path);
         else if (!SDL_strcmp(argv[i], "--sd-size") && i + 1 < argc) app->sd_mb = (uint32_t)SDL_atoi(argv[++i]);
         else if (!SDL_strcmp(argv[i], "--no-sd")) app->sd_path[0] = 0;
@@ -392,6 +399,11 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
         case SDLK_P:
             app->paused = !app->paused;
             show_message(app, app->paused ? "Paused" : "Running");
+            break;
+        case SDLK_F7:
+            app->raw_sound = !app->raw_sound;
+            app->audio.piezo = !app->raw_sound;
+            show_message(app, app->raw_sound ? "Sound: the bare pin signal" : "Sound: through the piezo");
             break;
         case SDLK_F9: app->stats = !app->stats; break;
         case SDLK_F10: screenshot(app); break;
