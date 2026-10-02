@@ -37,6 +37,15 @@ void chg_reset(ChgMachine *m, bool power_on)
             memcpy(m->ram + i, &r, 4);
         }
     }
+    /* The reset cause in RCC RSTSCKR. A power-on reads as pin, power-on and
+       software reset together: on the board the factory boot code runs first
+       and enters user flash with a software reset (measured, CHCasino's
+       bootloader, test/hil/RESULTS-2026-10-01.md), which is why the SD menu
+       bootloader tells a power-on by PORRSTF alone. A software reset
+       (PFIC SYSRESET: a program returning to the bootloader) adds its flag
+       to whatever was not cleared. */
+    if (power_on) m->reset_flags = 0x1C000000u;     /* PINRSTF | PORRSTF | SFTRSTF */
+    else m->reset_flags |= 0x10000000u;             /* SFTRSTF */
     bus_reset(m, power_on);
     /* the card powers with the board; a warm reset of the MCU leaves it be */
     if (power_on) sdspi_reset(&m->sdspi);

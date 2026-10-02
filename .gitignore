@@ -4,6 +4,8 @@ build_*/
 *.bmp
 *.ppm
 /roms
+/chg
+/bootloaders
 /.vscode
 /build
 /build_web

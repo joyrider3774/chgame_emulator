@@ -278,6 +278,10 @@ typedef struct ChgMachine {
 
     uint32_t entry;         /* where a reset starts executing */
     bool     reset_request;
+    /* RCC RSTSCKR bits 25-31, the reset cause: they collect over resets
+       until software writes RMVF, so they live outside the RCC registers
+       that a reset clears */
+    uint32_t reset_flags;
     char     serial_out[256];
     int      serial_len;
 } ChgMachine;

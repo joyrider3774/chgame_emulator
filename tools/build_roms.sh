@@ -150,3 +150,6 @@ build_one "$first"
 tail -n +2 "$WORK/list.txt" | tr '\n' '\0' |
     xargs -0 -P "$JOBS" -I{} sh -c "$(declare -f winpath build_one); build_one \"\$1\"" _ {}
 
+
+# and every ROM as a CHG package for the SD menu bootloader, in chg/
+python "$HERE/tools/make_chg.py"

@@ -39,7 +39,9 @@ Modelled on the owner's earlier TinyJoypad emulator
 | `web/shell.html` | page around the web build: file picker, URL box, `?rom=`, `?sd=`, `games.json` menu, card manager overlay |
 | `web/sdcard.html`, `web/sdtools.js` | the card manager page (`?card=chgame`) and the zip / FAT-image reader + zip writer. **Identical copies in aka_emulator/web: change both.** The manager edits the IDBFS database (`/chgame/sdcard`, store `FILE_DATA`, key = full path, `{timestamp, mode, contents}`) directly; the overlay ejects the card (`chg_web_sd_eject`, pauses) and reinserts it after `syncfs(true)` |
 | `tools/headless.c` | `chg_headless`: run without a window, report speed, dump screen/RAM/registers |
-| `tools/build_roms.sh` | builds every known CHGame program into `roms/` (gitignored) |
+| `tools/build_roms.sh` | builds every known CHGame program into `roms/` (gitignored), then runs `make_chg.py` |
+| `tools/make_chg.py` | every ROM as a `.CHG` package (CHCasino's SD menu format) into `chg/` (gitignored), 8.3 names, `chg/INDEX.TXT` |
+| `tools/build_bootloaders.sh` | builds CHCasino's SD menu bootloader (release) in a temp copy, only the binary to `bootloaders/chgame_sdboot.bin` (gitignored) |
 | `tools/make_web.sh` | Emscripten build + the games listed in `web/games.json` (frozen at the 46 it had on 2026-10-02: the owner wants new games only on the games site, `c:/github/chgames`, `tools/build_site.py`), `serve` to host with Python |
 | `tests/xw_test.c`, `tests/xw_golden.txt` | XW decoder vs WCH's own assembler output |
 | `tests/sketches/chg_cal/` | **the calibration sketch** the cycle model is fitted to (51 asm loops) |
@@ -185,6 +187,24 @@ the `ALIGN4` macro in `bench.S`), and use `.option norelax`.
   changes are logged with timestamps; `audio.c` integrates in closed form.
 - **Saves**: flash pages the program writes go to `<rom>.sav`
   (4-byte address + 256 bytes, repeated); on the web IndexedDB `/chgame/saves`, the card `/chgame/sdcard` (IDBFS names the database after the mount point; the AKA emulator on the same site uses `/aka/...`. Builds before 2026-10-01 used the shared `/sdcard` and `/saves`: the page copies the old saves in once, see `fromShared` in shell.html).
+- **Other bootloaders** (`--bootloader file.bin`, `chg_set_bootloader()` in
+  loader.c; the built-in one stays the default). Made for CHCasino's SD menu
+  bootloader (`c:/github/CHCasino/platform/bootloader/release/chgame_sdboot.bin`):
+  it installs `/GAMES/*.CHG` packages into app flash through the flash
+  controller. Without a program the flash starts erased with only the
+  bootloader (`chg_load_bootloader_only()`), and its `.sav` is
+  `<bootloader>.sav`. It depends on: the reset-cause flags in RCC RSTSCKR
+  (`m->reset_flags`, bits 25-31, kept across resets until RMVF; a power-on
+  reads PIN+POR+SFT, measured on the board because the factory boot code
+  enters user flash with a software reset; a SYSRESET adds SFT), and on
+  FLOCK/LOCK reading the lock state rather than what was written (it locks
+  fast programming after every page and unlocks before the next; with the
+  stored bit, only its first page was ever written). F4 / `chg_headless
+  --back T` clear the boot request block (RAM 0x20000000, magic + ~magic) and
+  do a software reset, as a CHCasino game holding START does. Test card:
+  pack built ROMs with `python c:/github/CHCasino/tools/chgpack.py pack
+  X.bin GAMES/X.CHG --title X`, run `chg_headless - 20 NUL --bootloader
+  <copy of chgame_sdboot.bin> --sd card --press a@4 --save --shots s`.
 - **USB** is a dumb register block: the core's CDC code runs, nothing
   enumerates, `Serial` output is dropped (as on a board with no PC).
 - The game-fps number is a heuristic (a RAMWR window starting above the last

@@ -8,6 +8,9 @@
  *          bootloader included, and then runs from 0x0000
  *   .hex   Intel HEX, placed where its addresses say
  *   .elf   the loadable segments, at their load addresses
+ *   .chg   a game package for CHCasino's SD menu bootloader ("CHG1": a
+ *          512-byte header, then the .bin), checked as that bootloader
+ *          checks it; its program goes to 0x3000 like a .bin
  *
  * The save file sits beside the program as <name>.sav and holds every flash
  * page the program has written: a 4 byte address then 256 bytes, repeated.
@@ -153,20 +156,64 @@ static void put32(uint8_t *p, uint32_t v)
     p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
 }
 
+/* the bootloader in use: the built-in one, or a file chg_set_bootloader read */
+static uint8_t *custom_boot;
+static size_t custom_boot_size;
+
+bool chg_set_bootloader(const char *path, char *err, size_t errlen)
+{
+    free(custom_boot);
+    custom_boot = NULL;
+    custom_boot_size = 0;
+    if (!path) return true;
+    size_t size;
+    uint8_t *data = read_file(path, &size);
+    if (!data) { snprintf(err, errlen, "cannot read the bootloader %s", path); return false; }
+    if (size == 0 || size > CHG_APP_START) {
+        snprintf(err, errlen, "%s: a bootloader is at most %u bytes (0x0000-0x2FFF), this is %u",
+                 path, (unsigned)CHG_APP_START, (unsigned)size);
+        free(data);
+        return false;
+    }
+    custom_boot = data;
+    custom_boot_size = size;
+    return true;
+}
+
+static void put_bootloader(ChgMachine *m)
+{
+    memset(m->flash, 0xff, CHG_APP_START);
+    if (custom_boot) memcpy(m->flash, custom_boot, custom_boot_size);
+    else memcpy(m->flash, chg_bootloader, chg_bootloader_size);
+}
+
+void chg_load_bootloader_only(ChgMachine *m)
+{
+    memset(m->flash, 0xff, sizeof(m->flash));
+    memset(m->flash_dirty, 0, sizeof(m->flash_dirty));
+    m->flash_written = false;
+    put_bootloader(m);
+    m->entry = 0;
+}
+
 /* What a real CHGame has around an application: the bootloader in the first
    12 KB, and the metadata page the uploader writes last (magic, version,
    length, CRC-32 of the image), which the bootloader checks before it jumps
-   to 0x3000 */
-static void install_bootloader(ChgMachine *m)
+   to 0x3000. length: the image as uploaded (a .bin or a package's payload,
+   padded with 0xFF to whole words, as chgame-upload and the SD menu
+   bootloader write it, so the menu knows it as installed), or 0: up to its
+   last programmed byte (.hex, .elf) */
+static void install_bootloader(ChgMachine *m, uint32_t length)
 {
-    memcpy(m->flash, chg_bootloader, chg_bootloader_size);
+    put_bootloader(m);
 
-    /* the image runs to its last programmed byte, a whole number of words */
-    uint32_t end = CHGAME_META_ADDR;
-    while (end > CHG_APP_START && m->flash[end - 1] == 0xff)
-        end--;
-    uint32_t length = (end - CHG_APP_START + 3) & ~3u;
-    if (length == 0) length = 4;
+    if (!length) {
+        uint32_t end = CHGAME_META_ADDR;
+        while (end > CHG_APP_START && m->flash[end - 1] == 0xff)
+            end--;
+        length = (end - CHG_APP_START + 3) & ~3u;
+        if (length == 0) length = 4;
+    }
 
     uint8_t *meta = m->flash + CHGAME_META_ADDR;
     memset(meta, 0xff, CHG_PAGE_SIZE);
@@ -180,6 +227,40 @@ static void install_bootloader(ChgMachine *m)
     put32(meta + 28, 0);
 }
 
+/* A .CHG game package (CHCasino's docs/chg-format.md), what the SD menu
+   bootloader installs from the card: a 512-byte header, then the program
+   image padded to whole words. Checked as that bootloader checks it, in its
+   order; the payload is returned in place */
+#define CHG_PKG_HEADER 512u
+static bool chg_package(const uint8_t *d, size_t size, const uint8_t **payload, uint32_t *n,
+                        char *err, size_t errlen)
+{
+    if (size < CHG_PKG_HEADER || rd32(d) != 0x31474843u) {                  /* "CHG1" */
+        snprintf(err, errlen, "not a CHG package"); return false;
+    }
+    if (crc32_iso_hdlc(d, 0x1FC) != rd32(d + 0x1FC)) {
+        snprintf(err, errlen, "the CHG package's header is damaged"); return false;
+    }
+    if (rd16(d + 4) != 1 || rd16(d + 6) != CHG_PKG_HEADER) {
+        snprintf(err, errlen, "CHG package format %u is not supported", rd16(d + 4)); return false;
+    }
+    if (rd32(d + 8) != 0x35335843u || rd32(d + 12) != 0x003000F7u) {      /* "CX35", 0x3000 + 0xF700 */
+        snprintf(err, errlen, "this CHG package is not for the CHGame"); return false;
+    }
+    *n = rd32(d + 16);
+    if (!*n || *n > CHGAME_META_ADDR - CHG_APP_START || (*n & 3) || size < CHG_PKG_HEADER + *n) {
+        snprintf(err, errlen, "the CHG package's program size is wrong"); return false;
+    }
+    *payload = d + CHG_PKG_HEADER;
+    if (rd32(*payload + 8) == 0x4C424843u) {                                /* "CHBL" */
+        snprintf(err, errlen, "this CHG package holds a bootloader, not a program"); return false;
+    }
+    if (crc32_iso_hdlc(*payload, *n) != rd32(d + 20)) {
+        snprintf(err, errlen, "the CHG package's program is damaged (CRC)"); return false;
+    }
+    return true;
+}
+
 bool chg_load_program(ChgMachine *m, const char *path, char *err, size_t errlen)
 {
     size_t size;
@@ -191,9 +272,13 @@ bool chg_load_program(ChgMachine *m, const char *path, char *err, size_t errlen)
     m->flash_written = false;
 
     bool ok;
-    uint32_t lowest = CHG_APP_START;
+    uint32_t lowest = CHG_APP_START, length = 0;
     if (size >= 4 && data[0] == 0x7f && data[1] == 'E' && data[2] == 'L' && data[3] == 'F') {
         ok = load_elf(m, data, size, &lowest, err, errlen);
+    } else if (size >= 4 && rd32(data) == 0x31474843u) {
+        const uint8_t *payload;
+        ok = chg_package(data, size, &payload, &length, err, errlen) &&
+             place(m, CHG_APP_START, payload, length, err, errlen);
     } else if (ends_with(path, ".hex")) {
         ok = load_hex(m, (const char *)data, &lowest, err, errlen);
     } else if (size > CHG_FLASH_USER - 256 - CHG_APP_START) {
@@ -201,6 +286,7 @@ bool chg_load_program(ChgMachine *m, const char *path, char *err, size_t errlen)
         ok = place(m, 0, data, size, err, errlen);
     } else {
         ok = place(m, CHG_APP_START, data, size, err, errlen);
+        length = ((uint32_t)size + 3) & ~3u;
     }
     free(data);
     if (!ok) return false;
@@ -210,7 +296,7 @@ bool chg_load_program(ChgMachine *m, const char *path, char *err, size_t errlen)
            application at all: it runs from its own reset vector */
         m->entry = 0;
     } else if (chg_use_bootloader) {
-        install_bootloader(m);
+        install_bootloader(m, length);
         m->entry = 0;
     } else {
         m->entry = CHG_APP_START;

@@ -896,7 +896,13 @@ static void flash_ctl_write(ChgMachine *m, uint32_t off, uint32_t v)
         const uint32_t was = f->ctlr;
         if (v & FL_LOCK) { f->locked = true; f->fast_locked = true; }
         if (v & FL_FLOCK) f->fast_locked = true;
-        f->ctlr = v & ~(FL_STRT | FL_BUF_LOAD | FL_BUF_RST);
+        /* LOCK and FLOCK are not kept as written: they read as the lock state
+           (see flash_ctl_read). Kept, the FLOCK of a "CTLR |= FLOCK" would
+           come back with the next read-modify-write after the mode keys had
+           unlocked fast programming, and lock it again: CHCasino's
+           bootloader locks after every page and unlocks before the next, and
+           only its first page was written */
+        f->ctlr = v & ~(FL_STRT | FL_BUF_LOAD | FL_BUF_RST | FL_LOCK | FL_FLOCK);
         if (f->locked) break;
         if ((v & FL_BUF_RST) && !f->fast_locked)
             memset(f->page_buf, 0xff, sizeof(f->page_buf));
@@ -1074,6 +1080,10 @@ uint32_t bus_read_slow(ChgMachine *m, uint32_t addr, int size, int *wait)
             v = r < 11 ? m->rcc[r] : 0;
             if (r == 0) v |= 0x03;                          /* HSION, HSIRDY */
             if (r == 1) v = (v & ~0x0cu) | ((v & 3) << 2);  /* SWS follows SW */
+            if (r == 9) {                                   /* RSTSCKR */
+                v = (v & 0x00ffffffu) | m->reset_flags;
+                if (v & 1) v |= 2;                          /* LSIRDY follows LSION */
+            }
             break;
         }
         case 0x13800: case 0x04400: case 0x04800: case 0x04C00:
@@ -1158,7 +1168,11 @@ void bus_write_slow(ChgMachine *m, uint32_t addr, uint32_t value, int size, int 
     case 0x12400: adc_write(m, off & 0x3ff, v); return;
     case 0x21000: {
         const int r = (int)(off & 0x3ff) / 4;
-        if (r < 11) m->rcc[r] = v;
+        if (r == 9) {
+            /* RSTSCKR: RMVF clears the reset-cause flags, which are read only */
+            if (v & 0x01000000u) m->reset_flags = 0;
+            m->rcc[9] = v & 0x00ffffffu & ~0x01000000u;
+        } else if (r < 11) m->rcc[r] = v;
         return;
     }
     case 0x13800: case 0x04400: case 0x04800: case 0x04C00:

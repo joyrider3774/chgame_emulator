@@ -452,7 +452,8 @@ static uint64_t folder_card_size(const char *path)
     for (int i = 0; list && i < n; i++) {
         if (list[i].dir) {
             char sub[2048];
-            snprintf(sub, sizeof sub, "%s/%s", path, list[i].name);
+            /* a path too long for the buffer is left out rather than cut short */
+            if (snprintf(sub, sizeof sub, "%s/%s", path, list[i].name) >= (int)sizeof sub) continue;
             used += folder_card_size(sub) + 4096;
         } else {
             used += (list[i].size + 4095) & ~4095ull;

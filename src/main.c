@@ -37,6 +37,7 @@ static const char *help_text[] = {
     "F1               this help",
     "F2               reset",
     "F3               open a program",
+    "F4               back to the bootloader (game menu)",
     "P  /  hold Tab   pause / fast forward",
     "+ / -            volume",
     "F7               piezo sound / bare pin signal",
@@ -45,9 +46,11 @@ static const char *help_text[] = {
     "F11, Alt+Enter   fullscreen",
     "Esc              quit",
     "",
-    "Drop a .bin, .hex or .elf on the window",
+    "Drop a .bin, .chg, .hex or .elf on the window",
     "microSD: the folder sdcard next to the emulator,",
     "  or --sd folder|card.img (made if missing)",
+    "--bootloader file.bin: another bootloader at 0x0000;",
+    "  without a program it starts alone (SD game menu)",
 };
 
 /* What the F9 overlay shows, measured over the last second */
@@ -177,6 +180,42 @@ static bool load_program(App *app, const char *path)
     return true;
 }
 
+/* No program: the board as a bootloader with a game menu leaves it, which
+   installs games from the card itself (CHCasino's SD menu bootloader). What
+   it flashes, and what the games then save, is kept in <bootloader>.sav, so
+   the installed game is still there next time, as on the device */
+static bool boot_bootloader_only(App *app, const char *boot_path)
+{
+    write_save(app);
+    insert_sd(app);
+    sync_sd(app);
+    chg_load_bootloader_only(app->m);
+    SDL_strlcpy(app->program, boot_path, sizeof app->program);
+    chg_save_path(boot_path, app->save_path, sizeof app->save_path);
+    chg_load_save(app->m, app->save_path);
+    chg_reset(app->m, true);
+    chg_audio_init(&app->audio, AUDIO_RATE, app->m->cycles);
+    app->audio.piezo = !app->raw_sound;
+    if (app->audio_stream) SDL_ClearAudioStream(app->audio_stream);
+    app->loaded = true;
+    app->paused = false;
+    SDL_SetWindowTitle(app->window, "CHGame Emulator - bootloader");
+    show_message(app, "Bootloader");
+    return true;
+}
+
+/* F4: back to the bootloader, the way a program returns to the game menu (a
+   CHCasino game when START is held): a software reset with no boot request
+   pending, so the bootloader does not start the program straight away */
+static void back_to_bootloader(App *app)
+{
+    if (!app->loaded) return;
+    write_save(app);
+    SDL_memset(app->m->ram, 0, 8);  /* the boot request block: magic, ~magic */
+    chg_reset(app->m, false);
+    show_message(app, "Back to the bootloader");
+}
+
 #ifdef __EMSCRIPTEN__
 /* the page's file picker writes the chosen file into the virtual file
    system and hands its path over here */
@@ -249,7 +288,7 @@ static void open_dialog(App *app)
     EM_ASM(document.getElementById('file').click(););
 #else
     static const SDL_DialogFileFilter filters[] = {
-        { "CHGame programs", "bin;hex;elf" },
+        { "CHGame programs", "bin;chg;hex;elf" },
         { "All files", "*" },
     };
     SDL_ShowOpenFileDialog(file_chosen, app, app->window, filters, 2, NULL, false);
@@ -375,9 +414,10 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     }
 #endif
 
-    const char *program = NULL;
+    const char *program = NULL, *bootloader = NULL;
     for (int i = 1; i < argc; i++) {
         if (!SDL_strcmp(argv[i], "--no-bootloader")) chg_use_bootloader = false;
+        else if (!SDL_strcmp(argv[i], "--bootloader") && i + 1 < argc) bootloader = argv[++i];
         else if (!SDL_strcmp(argv[i], "--no-piezo")) { app->raw_sound = true; app->audio.piezo = false; }
         else if (!SDL_strcmp(argv[i], "--piezo")) { app->raw_sound = false; app->audio.piezo = true; }
         else if (!SDL_strcmp(argv[i], "--sd") && i + 1 < argc) SDL_strlcpy(app->sd_path, argv[++i], sizeof app->sd_path);
@@ -388,7 +428,16 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
 #ifndef __EMSCRIPTEN__
     insert_sd(app);
 #endif
+    if (bootloader) {
+        char err[512];
+        if (!chg_set_bootloader(bootloader, err, sizeof err)) {
+            SDL_Log("%s", err);
+            show_message(app, "%s", err);
+            bootloader = NULL;
+        }
+    }
     if (program) load_program(app, program);
+    else if (bootloader) boot_bootloader_only(app, bootloader);
     app->sd_synced = SDL_GetTicksNS();
     if (!app->loaded)
         show_message(app, "Drop a CHGame .bin here, or press F3");
@@ -432,6 +481,7 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
             }
             break;
         case SDLK_F3: open_dialog(app); break;
+        case SDLK_F4: back_to_bootloader(app); break;
         case SDLK_P:
             app->paused = !app->paused;
             show_message(app, app->paused ? "Paused" : "Running");

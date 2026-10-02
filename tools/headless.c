@@ -72,19 +72,36 @@ int main(int argc, char **argv)
         return 0;
     }
     if (argc < 2) {
-        fprintf(stderr, "usage: chg_headless game.bin [seconds] [out.ppm] [--press btn@sec[:dur]]... "
+        fprintf(stderr, "usage: chg_headless game.bin|- [seconds] [out.ppm] [--press btn@sec[:dur]]... "
                         "[--shots prefix] [--save] [--sd folder|card.img]\n"
-                        "       chg_headless --sd-make card.img [folder] [MB]\n");
+                        "                    [--bootloader boot.bin] [--back sec]...\n"
+                        "       chg_headless --sd-make card.img [folder] [MB]\n"
+                        "  - for the program: the bootloader alone, program flash erased (an SD menu\n"
+                        "  bootloader installs from the card); --back: F4, back to the bootloader\n");
         return 2;
     }
     static ChgMachine m;
     static ChgAudio audio;
     chg_init(&m);
-    for (int i = 2; i < argc; i++)
+    char err[512];
+    const char *bootloader = NULL;
+    for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--no-bootloader"))
             chg_use_bootloader = false;
-    char err[256];
-    if (!chg_load_program(&m, argv[1], err, sizeof err)) {
+        else if (!strcmp(argv[i], "--bootloader") && i + 1 < argc)
+            bootloader = argv[++i];
+    }
+    if (bootloader && !chg_set_bootloader(bootloader, err, sizeof err)) {
+        fprintf(stderr, "%s\n", err);
+        return 1;
+    }
+    const bool boot_only = !strcmp(argv[1], "-");
+    if (boot_only && !bootloader) {
+        fprintf(stderr, "- (no program) needs --bootloader\n");
+        return 2;
+    }
+    if (boot_only) chg_load_bootloader_only(&m);
+    else if (!chg_load_program(&m, argv[1], err, sizeof err)) {
         fprintf(stderr, "%s\n", err);
         return 1;
     }
@@ -99,6 +116,8 @@ int main(int argc, char **argv)
     uint32_t mem_addr = 0, mem_count = 0;
     Press presses[64];
     int npress = 0;
+    double backs[16];
+    int nback = 0, next_back = 0;
     int pos = 0;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--press") && i + 1 < argc) {
@@ -117,6 +136,12 @@ int main(int argc, char **argv)
             i += 2;
         } else if (!strcmp(argv[i], "--no-bootloader")) {
             /* handled before loading */
+        } else if (!strcmp(argv[i], "--bootloader") && i + 1 < argc) {
+            i++;    /* handled before loading */
+        } else if (!strcmp(argv[i], "--back") && i + 1 < argc) {
+            /* F4 in the front end: back to the bootloader at that time */
+            if (nback < 16) backs[nback++] = atof(argv[i + 1]);
+            i++;
         } else if (!strcmp(argv[i], "--save")) {
             save = true;
         } else if (!strcmp(argv[i], "--sd") && i + 1 < argc) {
@@ -142,7 +167,7 @@ int main(int argc, char **argv)
     }
 
     char save_path[1100];
-    chg_save_path(argv[1], save_path, sizeof save_path);
+    chg_save_path(boot_only ? bootloader : argv[1], save_path, sizeof save_path);
     if (save && chg_load_save(&m, save_path))
         chg_reset(&m, true);
     chg_audio_init(&audio, 48000, m.cycles);
@@ -165,6 +190,12 @@ int main(int argc, char **argv)
     static uint16_t px[128 * 128];
     while (m.cycles < total) {
         const double t = (double)m.cycles / CHG_HCLK;
+        if (next_back < nback && t >= backs[next_back]) {
+            /* as F4: no boot request pending, then a software reset */
+            memset(m.ram, 0, 8);
+            chg_reset(&m, false);
+            next_back++;
+        }
         uint8_t held = 0;
         for (int i = 0; i < npress; i++)
             if (t >= presses[i].at && t < presses[i].at + presses[i].dur) held |= presses[i].btn;
