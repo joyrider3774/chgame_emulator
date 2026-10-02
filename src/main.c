@@ -361,9 +361,18 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
        first program: it goes in with that program */
     SDL_strlcpy(app->sd_path, "/chgame/sdcard", sizeof app->sd_path);
 #else
-    /* the card defaults to the folder "sdcard" next to the emulator */
+    /* the card defaults to the folder "sdcard" next to the emulator. In a
+       macOS .app bundle SDL's base path is the bundle's Contents/Resources,
+       out of sight: the folder goes next to the bundle instead */
     const char *base = SDL_GetBasePath();
     SDL_snprintf(app->sd_path, sizeof app->sd_path, "%ssdcard", base ? base : "");
+    char *bundle = SDL_strstr(app->sd_path, ".app/Contents/");
+    if (bundle) {
+        *bundle = 0;
+        char *slash = SDL_strrchr(app->sd_path, '/');
+        if (slash) SDL_strlcpy(slash + 1, "sdcard", sizeof app->sd_path - (size_t)(slash + 1 - app->sd_path));
+        else SDL_strlcpy(app->sd_path, "sdcard", sizeof app->sd_path);
+    }
 #endif
 
     const char *program = NULL;

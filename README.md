@@ -130,7 +130,8 @@ window that starts higher up the screen than the one before it.
 ./build/CHGame_Emulator game.bin --sd folder|card.img [--sd-size MB]   # --no-sd: an empty slot
 ```
 
-By default the card is the folder `sdcard` next to the emulator. A folder's
+By default the card is the folder `sdcard` next to the emulator (on macOS
+next to the `.app` bundle, not inside it). A folder's
 files go on a FAT32 card built in memory; what the program writes, creates or
 deletes goes back into the folder every few seconds and when the emulator
 closes. An image file is a whole card (as a card reader dumps it), read and
