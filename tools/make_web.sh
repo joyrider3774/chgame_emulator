@@ -1,10 +1,10 @@
 #!/bin/sh
-# Builds the web version into build_web/ with Emscripten, puts roms/ beside it
-# with a games.json listing them for the page's Games menu, and optionally
-# serves it:
+# Builds the web version into build_web/ with Emscripten, with the games in
+# web/games.json beside it (newer ones are on the games site only), and
+# optionally serves it:
 #
 #   tools/make_web.sh            build only
-#   tools/make_web.sh serve      build, then serve on http://127.0.0.1:8000
+#   tools/make_web.sh serve      build, then serve the repository on http://127.0.0.1:8000
 #
 # EMSDK defaults to c:/github/emsdk.
 
@@ -17,7 +17,16 @@ NODE_BIN=$(dirname "$(ls "$EMSDK"/node/*/bin/node* 2>/dev/null | head -1)")
 export EMSDK PATH="$EM:$NODE_BIN:$PATH"
 
 cd "$HERE" || exit 1
-"$PY" "$EM/emcmake.py" cmake -S . -B build_web -G Ninja -DCMAKE_BUILD_TYPE=Release > /dev/null || exit 1
+# emcmake from the emsdk folder, or the one on the PATH (the GitHub Action's
+# setup-emsdk puts it there)
+if [ -f "$EM/emcmake.py" ]; then
+    EMCMAKE="$PY $EM/emcmake.py"
+else
+    EMCMAKE=emcmake
+fi
+GEN=
+command -v ninja > /dev/null && GEN="-G Ninja"
+$EMCMAKE cmake -S . -B build_web $GEN -DCMAKE_BUILD_TYPE=Release > /dev/null || exit 1
 # the shell page is a link option, which cmake does not track: relink when it changes
 [ web/shell.html -nt build_web/CHGame_Emulator.html ] && rm -f build_web/CHGame_Emulator.html
 cmake --build build_web || exit 1
@@ -28,7 +37,7 @@ cmake --build build_web || exit 1
 # (web/sdcard.html, web/sdtools.js: the same files as in aka_emulator) go
 # beside it, stamped the same way.
 cp web/sdcard.html web/sdtools.js build_web/
-python - "build_web/CHGame_Emulator.html" "build_web/CHGame_Emulator.wasm" "build_web/sdtools.js" <<'PY'
+"$PY" - "build_web/CHGame_Emulator.html" "build_web/CHGame_Emulator.wasm" "build_web/sdtools.js" <<'PY'
 import hashlib, re, sys
 html, wasm, tools = sys.argv[1], sys.argv[2], sys.argv[3]
 build = hashlib.sha1(open(wasm, "rb").read() + open(tools, "rb").read() +
@@ -44,21 +53,37 @@ for page in (html, "build_web/sdcard.html"):
 print("build", build)
 PY
 
-rm -rf build_web/roms
-cp -r roms build_web/roms
-python - <<'PY'
-import json, os
-os.chdir("build_web")
-games = []
-for group in sorted(g for g in os.listdir("roms") if os.path.isdir(os.path.join("roms", g))):
-    for f in sorted(os.listdir(os.path.join("roms", group))):
-        if f.endswith(".bin"):
-            games.append({"file": "roms/%s/%s" % (group, f), "name": "%s / %s" % (group, f[:-4])})
-json.dump(games, open("games.json", "w"), indent=1)
-print("%d games in build_web/games.json" % len(games))
+# The emulator keeps the games it had on 2026-10-02, listed in web/games.json
+# (its Games menu), and only those: games added to roms/ since then are
+# published on the games site (c:/github/chgames, tools/build_site.py), not
+# here. Add a game to web/games.json to put it on this page after all.
+# roms/ is not in git, so a build from a fresh checkout (the GitHub Action)
+# has none of them: the menu then lists only the games that are there.
+rm -rf build_web/roms build_web/games.json
+"$PY" - <<'PY'
+import json, os, shutil
+games = json.load(open("web/games.json"))
+missing = []
+for g in games:
+    src = g["file"]
+    if not os.path.isfile(src):
+        missing.append(src)
+        continue
+    dst = os.path.join("build_web", src)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy2(src, dst)
+if not missing:
+    shutil.copy2("web/games.json", "build_web/games.json")
+elif len(missing) < len(games):
+    with open("build_web/games.json", "w", newline="\n") as f:
+        json.dump([g for g in games if g["file"] not in missing], f, indent=1)
+print("%d games in build_web/games.json%s" % (len(games) - len(missing),
+      " (%d not in roms/: run tools/build_roms.sh)" % len(missing) if missing else ""))
 PY
 
 if [ "$1" = "serve" ]; then
-    echo "http://127.0.0.1:8000/CHGame_Emulator.html"
-    cd build_web && python -m http.server 8000 --bind 127.0.0.1
+    # serving the repository root makes roms/ reachable as ../roms/... for testing:
+    # http://127.0.0.1:8000/build_web/CHGame_Emulator.html?rom=../roms/bateske/CHChess.bin
+    echo "http://127.0.0.1:8000/build_web/CHGame_Emulator.html"
+    python -m http.server 8000 --bind 127.0.0.1
 fi

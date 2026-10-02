@@ -83,9 +83,12 @@ cmake --build build_web
 ```
 
 Serve `build_web/` over http (browsers do not allow `fetch` from `file://`).
-`tools/make_web.sh serve` does all of it: builds, copies `roms/` beside the
-page with a `games.json` for its Games menu, and serves it on
-http://127.0.0.1:8000/CHGame_Emulator.html with Python.
+`tools/make_web.sh serve` does all of it: builds, then serves the repository
+on http://127.0.0.1:8000/build_web/CHGame_Emulator.html with Python (so
+`?rom=../roms/bateske/CHChess.bin` works). The web build carries the games
+listed in `web/games.json` (its Games menu), the ones it had on 2026-10-02.
+Games added since are published on the games site, which has its own copy
+of the emulator.
 Programs load from:
 
 * **Open file…** — a file on this computer

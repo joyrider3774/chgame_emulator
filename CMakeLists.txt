@@ -41,9 +41,31 @@ endif()
 # The emulator with its SDL3 front end
 #
 # Natively SDL3 is found as an installed package (static when there is one,
-# so the Windows exe runs on its own). Under Emscripten SDL3 comes from
-# emscripten's own port.
+# so the Windows exe runs on its own). With USE_VENDORED_SDL it is instead
+# downloaded at a fixed release and built here as a static library, which is
+# what the release builds (.github/workflows/build.yml) do: the executable
+# then needs no SDL3 on the machine it runs on. Under Emscripten SDL3 comes
+# from emscripten's own port.
 # ---------------------------------------------------------------------------
+option(USE_VENDORED_SDL "Download SDL3 and link it statically" OFF)
+set(SDL3_VENDORED_TAG "release-3.4.12" CACHE STRING "SDL3 git tag USE_VENDORED_SDL builds")
+
+if(USE_VENDORED_SDL AND NOT EMSCRIPTEN)
+    include(FetchContent)
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+    set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(SDL3
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+        GIT_TAG ${SDL3_VENDORED_TAG}
+        GIT_SHALLOW TRUE
+        EXCLUDE_FROM_ALL)
+    FetchContent_MakeAvailable(SDL3)
+endif()
+
 add_executable(CHGame_Emulator src/main.c)
 target_link_libraries(CHGame_Emulator PRIVATE chgame_core)
 
@@ -61,12 +83,19 @@ if(EMSCRIPTEN)
     )
     target_compile_options(chgame_core PRIVATE -O3)
 else()
-    find_package(SDL3 REQUIRED CONFIG)
-    if(TARGET SDL3::SDL3-static AND MINGW)
+    if(USE_VENDORED_SDL)
         target_link_libraries(CHGame_Emulator PRIVATE SDL3::SDL3-static)
-        target_link_options(CHGame_Emulator PRIVATE -static-libgcc -static)
+        if(MINGW)
+            target_link_options(CHGame_Emulator PRIVATE -static-libgcc -static)
+        endif()
     else()
-        target_link_libraries(CHGame_Emulator PRIVATE SDL3::SDL3)
+        find_package(SDL3 REQUIRED CONFIG)
+        if(TARGET SDL3::SDL3-static AND MINGW)
+            target_link_libraries(CHGame_Emulator PRIVATE SDL3::SDL3-static)
+            target_link_options(CHGame_Emulator PRIVATE -static-libgcc -static)
+        else()
+            target_link_libraries(CHGame_Emulator PRIVATE SDL3::SDL3)
+        endif()
     endif()
     if(NOT MSVC)
         target_compile_options(CHGame_Emulator PRIVATE -Wall -Wextra -Wno-unused-parameter)

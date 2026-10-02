@@ -74,6 +74,11 @@ fi
     echo "bateske|CHRoulette|$GITHUB/CHRoulette|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
     echo "bateske|CHBoardwalk|$GITHUB/CHBoardwalk|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
     echo "bateske|CHBackgammon|$GITHUB/CHBackgammon|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
+    for g in CHWordWheel CHCrossword CHWords CHDominoes CHBingo CHSlots CHTicTacToe CHFour CHSnakes CHCheckers CHSolitaire; do
+        echo "bateske|$g|$GITHUB/$g|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
+    done
+    # its tools/device.py builds it without the USB menu setting
+    echo "bateske|CHYacht|$GITHUB/CHYacht|opt=oslto,rtlib=nano,periph=game|"
     echo "bateske|CHSDtoUSB|$GITHUB/CHSDtoUSB|opt=osstd|"
     echo "poevoid|CHGame-Ponglike|$GITHUB/CHGame-Ponglike|opt=osstd|"
     for ex in "$GITHUB"/CHGfx/examples/*/; do

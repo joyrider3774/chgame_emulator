@@ -1,0 +1,183 @@
+# Controls when the workflow will run
+on:
+  # Allows you to run this workflow manually target the Actions tab
+  workflow_dispatch:
+
+# SDL3 is not in this repository: CMake's USE_VENDORED_SDL downloads it from
+# github.com/libsdl-org/SDL during the build (the tag is SDL3_VENDORED_TAG in
+# CMakeLists.txt) and links it statically, so the emulator needs no SDL3 on
+# the machine it runs on. The web build uses Emscripten's own SDL3 port.
+
+name: Build
+jobs:
+  build:
+    name: Build ${{matrix.name}}-${{matrix.runson}}_${{ matrix.env }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # GitHub's hosted runners as listed on github.com/actions/runner-images
+        # (2026-10): Ubuntu 26.04 is new, macOS 14 is deprecated and left out.
+        # cc is the MSYS2 compiler package (Windows on Arm has clang only).
+        include:
+          - { runson: 'windows-latest',   runsontype: 'windows', sys: 'mingw64',    env: 'x86_64',        cc: 'gcc',   name: 'CHGame_Emulator', binsuffix: '.exe', }
+          - { runson: 'windows-latest',   runsontype: 'windows', sys: 'mingw32',    env: 'i686',          cc: 'gcc',   name: 'CHGame_Emulator', binsuffix: '.exe', }
+          - { runson: 'windows-11-arm',   runsontype: 'windows', sys: 'clangarm64', env: 'clang-aarch64', cc: 'clang', name: 'CHGame_Emulator', binsuffix: '.exe', }
+          - { runson: 'ubuntu-26.04',     runsontype: 'linux',   sys: 'usr',        env: 'x64',           cc: '',      name: 'CHGame_Emulator', binsuffix: '',     }
+          - { runson: 'ubuntu-24.04',     runsontype: 'linux',   sys: 'usr',        env: 'x64',           cc: '',      name: 'CHGame_Emulator', binsuffix: '',     }
+          - { runson: 'ubuntu-22.04',     runsontype: 'linux',   sys: 'usr',        env: 'x64',           cc: '',      name: 'CHGame_Emulator', binsuffix: '',     }
+          - { runson: 'ubuntu-26.04-arm', runsontype: 'linux',   sys: 'usr',        env: 'arm64',         cc: '',      name: 'CHGame_Emulator', binsuffix: '',     }
+          - { runson: 'ubuntu-24.04-arm', runsontype: 'linux',   sys: 'usr',        env: 'arm64',         cc: '',      name: 'CHGame_Emulator', binsuffix: '',     }
+          - { runson: 'ubuntu-22.04-arm', runsontype: 'linux',   sys: 'usr',        env: 'arm64',         cc: '',      name: 'CHGame_Emulator', binsuffix: '',     }
+          - { runson: 'macos-15-intel',   runsontype: 'mac',     sys: 'usr',        env: 'intel',         cc: '',      name: 'CHGame_Emulator', binsuffix: '',     }
+          - { runson: 'macos-26-intel',   runsontype: 'mac',     sys: 'usr',        env: 'intel',         cc: '',      name: 'CHGame_Emulator', binsuffix: '',     }
+          - { runson: 'macos-15',         runsontype: 'mac',     sys: 'usr',        env: 'arm64',         cc: '',      name: 'CHGame_Emulator', binsuffix: '',     }
+          - { runson: 'macos-26',         runsontype: 'mac',     sys: 'usr',        env: 'arm64',         cc: '',      name: 'CHGame_Emulator', binsuffix: '',     }
+
+    runs-on: ${{matrix.runson}}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - if: ${{ matrix.runsontype == 'windows'}}
+        name: Setup Msys
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{matrix.sys}}
+          install: >-
+            base-devel
+            git
+            mingw-w64-${{matrix.env}}-${{matrix.cc}}
+            mingw-w64-${{matrix.env}}-cmake
+            mingw-w64-${{matrix.env}}-ninja
+
+      - if: ${{ matrix.runsontype == 'linux'}}
+        name: install libsdl 3 dependencies
+        run: |
+          sudo apt update
+          sudo apt-get install -y build-essential cmake git wget libxtst-dev libglib2.0-dev libasound2-dev libdbus-1-dev libibus-1.0-dev libjack-dev libdrm-dev libudev-dev libgl1-mesa-dev libgles2-mesa-dev libwayland-dev libxkbcommon-dev wayland-protocols libpulse-dev libsamplerate0-dev libx11-dev libxext-dev libxcursor-dev libxi-dev libxfixes-dev libxrandr-dev libxss-dev libgbm-dev
+          #try these 1 by 1 as they are different on different ubuntu versions
+          for i in libsndio7.0 libsndio7.1 libsndio7.2 libsndio-dev libdecor-0-dev libdecoration0-dev libpipewire-0.3-dev libpipewire-dev liburing-dev; do sudo apt-get install -y $i || true; done
+
+      - if: ${{ matrix.runsontype == 'windows'}}
+        name: Build Emulator Windows
+        shell: msys2 {0}
+        run: |
+          mkdir build
+          cd build
+          cmake -G "Ninja" -DCMAKE_C_COMPILER=${{matrix.cc}} -DUSE_VENDORED_SDL=ON -DCMAKE_BUILD_TYPE=Release ..
+          ninja CHGame_Emulator chg_headless xw_test
+
+      - if: ${{ matrix.runsontype != 'windows'}}
+        name: Build Emulator Other
+        run: |
+          mkdir build
+          cd build
+          cmake -DUSE_VENDORED_SDL=ON -DCMAKE_BUILD_TYPE=Release ..
+          cmake --build . --parallel --target CHGame_Emulator chg_headless xw_test
+
+      # the XW (WCH compressed instruction) decoder against WCH's own assembler
+      - if: ${{ matrix.runsontype == 'windows'}}
+        name: Test XW decoder (Windows)
+        shell: msys2 {0}
+        run: ./build/xw_test.exe tests/xw_golden.txt
+
+      - if: ${{ matrix.runsontype != 'windows'}}
+        name: Test XW decoder
+        run: ./build/xw_test tests/xw_golden.txt
+
+      - if: ${{ matrix.runsontype == 'mac'}}
+        name: Copy Emulator Mac
+        run: |
+          mkdir ./Release
+          mkdir "./Release/${{matrix.name}}.app"
+          mkdir "./Release/${{matrix.name}}.app/Contents"
+          mkdir "./Release/${{matrix.name}}.app/Contents/MacOS"
+          mkdir "./Release/${{matrix.name}}.app/Contents/Resources"
+          cp "build/${{matrix.name}}" "./Release/${{matrix.name}}.app/Contents/MacOS/${{matrix.name}}"
+          cp build/chg_headless ./Release/
+          cp ./README.md "./Release/"
+          cp ./LICENSE "./Release/"
+
+          #create PList
+          echo "<?xml version='1.0' encoding='UTF-8'?>" > "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "<!DOCTYPE plist PUBLIC '-//Apple Computer//DTD PLIST 1.0//EN' 'http://www.apple.com/DTDs/PropertyList-1.0.dtd'>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "<plist version='1.0'>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "  <dict>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <key>CFBundleExecutable</key>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <string>CHGame_Emulator</string>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <key>CFBundleIdentifier</key>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <string>com.github.joyrider3774.chgame_emulator</string>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <key>CFBundleName</key>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <string>CHGame Emulator</string>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <key>CFBundleShortVersionString</key>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <string>0.01</string>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <key>CFBundleInfoDictionaryVersion</key>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <string>6.0</string>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <key>CFBundlePackageType</key>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <string>APPL</string>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <key>IFMajorVersion</key>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <integer>0</integer>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <key>IFMinorVersion</key>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "    <integer>1</integer>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "  </dict>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+          echo "</plist>" >> "./Release/${{matrix.name}}.app/Contents/Info.plist"
+
+      - if: ${{ matrix.runsontype == 'mac'}}
+        name: Ad Hoc Code sign Appl Bundle (Mac)
+        run: |
+          codesign --force --deep -s - "./Release/${{matrix.name}}.app"
+
+      - if: ${{ matrix.runsontype != 'mac'}}
+        name: Copy Emulator Other
+        shell: bash
+        run: |
+          mkdir ./Release
+          mkdir "./Release/${{matrix.name}}"
+          cp "build/${{matrix.name}}${{matrix.binsuffix}}" "./Release/${{matrix.name}}/"
+          cp "build/chg_headless${{matrix.binsuffix}}" "./Release/${{matrix.name}}/"
+          cp ./README.md "./Release/${{matrix.name}}/"
+          cp ./LICENSE "./Release/${{matrix.name}}/"
+
+      - name: Store build
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{matrix.name}}-${{matrix.runson}}_${{ matrix.env }}
+          path: ./Release/
+
+  # The web version (WebAssembly + WebGL through SDL3) built with Emscripten
+  # by tools/make_web.sh, as it is built locally. roms/ is not in git, so it
+  # comes without games: open them with ?rom=, the file picker or a URL.
+  web:
+    name: Build CHGame_Emulator-web
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          # the version the emulator is built with locally
+          version: 6.0.4
+          actions-cache-folder: 'emsdk-cache'
+
+      - name: Build Emulator Web
+        run: sh tools/make_web.sh
+
+      - name: Copy Emulator Web
+        run: |
+          mkdir -p ./Release/CHGame_Emulator-web
+          cp build_web/CHGame_Emulator.html build_web/CHGame_Emulator.js build_web/CHGame_Emulator.wasm \
+             build_web/sdcard.html build_web/sdtools.js ./Release/CHGame_Emulator-web/
+          cp ./README.md ./LICENSE ./Release/CHGame_Emulator-web/
+
+      - name: Store build
+        uses: actions/upload-artifact@v7
+        with:
+          name: CHGame_Emulator-web
+          path: ./Release/

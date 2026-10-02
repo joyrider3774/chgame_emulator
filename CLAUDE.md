@@ -40,7 +40,7 @@ Modelled on the owner's earlier TinyJoypad emulator
 | `web/sdcard.html`, `web/sdtools.js` | the card manager page (`?card=chgame`) and the zip / FAT-image reader + zip writer. **Identical copies in aka_emulator/web: change both.** The manager edits the IDBFS database (`/chgame/sdcard`, store `FILE_DATA`, key = full path, `{timestamp, mode, contents}`) directly; the overlay ejects the card (`chg_web_sd_eject`, pauses) and reinserts it after `syncfs(true)` |
 | `tools/headless.c` | `chg_headless`: run without a window, report speed, dump screen/RAM/registers |
 | `tools/build_roms.sh` | builds every known CHGame program into `roms/` (gitignored) |
-| `tools/make_web.sh` | Emscripten build + roms + games.json, `serve` to host with Python |
+| `tools/make_web.sh` | Emscripten build + the games listed in `web/games.json` (frozen at the 46 it had on 2026-10-02: the owner wants new games only on the games site, `c:/github/chgames`, `tools/build_site.py`), `serve` to host with Python |
 | `tests/xw_test.c`, `tests/xw_golden.txt` | XW decoder vs WCH's own assembler output |
 | `tests/sketches/chg_cal/` | **the calibration sketch** the cycle model is fitted to (51 asm loops) |
 | `tests/sketches/chg_bench/` | quick 9-loop timing check shown on the LCD (`chg_bench.bin` prebuilt) |
