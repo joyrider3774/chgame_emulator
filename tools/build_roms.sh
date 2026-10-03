@@ -98,6 +98,10 @@ fi
     echo "bateske|CH32Doom|$GITHUB/CH32Doom|opt=osstd|"
     echo "bateske|FileBrowser|$GITHUB/FileBrowser|opt=osstd|"
     echo "poevoid|CHGame-Ponglike|$GITHUB/CHGame-Ponglike|opt=osstd|"
+    # the BunnyMark port (c:/github/bunnymark_ports, the AKA version is beside it)
+    if [ -d "$GITHUB/bunnymark_ports/chgame/BunnyMark" ]; then
+        echo "joyrider3774|BunnyMark|$GITHUB/bunnymark_ports/chgame/BunnyMark|opt=o2std,periph=game,usb=uploadonly|"
+    fi
     for ex in "$CHGFX"/examples/*/; do
         echo "chgfx|$(basename "$ex")|$ex|opt=o2std|"
     done
