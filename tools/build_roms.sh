@@ -3,11 +3,20 @@
 # arduino-cli that ships with Arduino IDE 2, using the IDE's own settings
 # (~/.arduinoIDE/arduino-cli.yaml): the board package (0.2.4 or later) and
 # the sketchbook's libraries are the IDE's, except CHGfx, which is always the
-# latest (the c:/github/CHGfx clone, pulled first).
+# one in bateske/CHGame (platform/libraries/CHGfx).
+#
+# bateske/CHGame (the c:/github/CHGame clone, pulled first) is the source of
+# truth for CHGame development: its board package's libraries/ hold CHGfx
+# (with its examples), CHSd and the CHGame library, whose examples are the
+# twenty casino games (examples/games/<Name>) and the apps CHSDtoUSB and
+# CHStlView (examples/apps).
+# The separate repositories those came from are frozen. The board package
+# installed is still the released 0.2.4 (CHGame has made no release yet).
 #
 #   roms/bateske/        Kevin Bates' CHGame games and tools
 #   roms/chgfx/          the CHGfx library's examples
 #   roms/poevoid/        poevoid's CHGame-Ponglike
+#   roms/filmote/        filmote's CHSpriteView
 #   roms/joyrider3774/   the *_embedded games, every CHGame target their
 #                        tools/build_releases.py lists, with its defines
 #
@@ -27,8 +36,22 @@ winpath() { cygpath -w "$1" 2>/dev/null || echo "$1"; }
 
 mkdir -p "$OUT" "$WORK"
 
-# the latest CHGfx (CHChess needs 1.3.0); board package: 0.2.4 or later
-git -C "$GITHUB/CHGfx" pull -q 2>/dev/null
+CHGAME="$GITHUB/CHGame"
+# since 2026-10-03 the libraries, and the games and apps as the CHGame
+# library's examples, live inside the board package in CHGame
+CHGLIBS="$CHGAME/platform/board/arduino/CHGame/libraries"
+CHGFX="$CHGLIBS/CHGfx"
+CHGAMELIB="$CHGLIBS/CHGame"
+CHSDLIB="$CHGLIBS/CHSd"
+CHGAMES="$CHGAMELIB/examples/Games"
+CHAPPS="$CHGAMELIB/examples/Apps"
+[ -d "$CHGAME" ] || git clone -q https://github.com/bateske/CHGame "$CHGAME"
+git -C "$CHGAME" pull -q 2>/dev/null
+# a folder that moved must stop the build: without it the sketches would
+# quietly build against whatever copy of CHGfx the sketchbook has
+for d in "$CHGFX" "$CHGAMELIB" "$CHSDLIB" "$CHGAMES" "$CHAPPS"; do
+    [ -d "$d" ] || { echo "not found: $d (has bateske/CHGame been reorganised?)"; exit 1; }
+done
 
 # FileBrowser uses Arduino's SD library, which stops at "#error Architecture
 # or board not supported" on the CH32. A copy in the build folder gets the
@@ -58,30 +81,24 @@ fi
 
 # group|name|sketch folder|board options|defines
 {
-    # README: keep the defaults, it only fits at -Os with Peripherals: Game
-    echo "bateske|CHBlackjack|$GITHUB/CHBlackjack|opt=osstd,periph=game|"
+    # bateske/CHGame's games and apps (CHSDtoUSB, CHStlView), with the release
+    # options its tools/device.py builds all of them with: LTO and the C
+    # library's nano variant to fit, no USB serial. Its FQBN names the board
+    # rev0, which is the 0.3.0 board package's name for it; the installed
+    # 0.2.4 still calls it CHGame (BOARD above)
+    for g in "$CHGAMES"/*/ "$CHAPPS"/*/; do
+        echo "bateske|$(basename "$g")|$g|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
+    done
+    # not in CHGame: their own repositories
     echo "bateske|NewBlocksColor|$GITHUB/NewBlocksColor|opt=o2std|"
-    echo "bateske|CHStlView|$GITHUB/CHStlView|opt=o2std|"
     echo "bateske|CHMultiSprite|$GITHUB/CHMultiSprite|opt=o2std|"
-    echo "bateske|CHSpriteView|$GITHUB/CHSpriteView|opt=o2std|"
+    # CHSpriteView is filmote's: bateske/CHSpriteView is a modified copy of it
+    # ("CHSpriteViewMOD"). Cloned into filmote/: the folder must be named like the .ino
+    echo "filmote|CHSpriteView|$GITHUB/filmote/CHSpriteView|opt=o2std|"
     echo "bateske|CH32Doom|$GITHUB/CH32Doom|opt=osstd|"
     echo "bateske|FileBrowser|$GITHUB/FileBrowser|opt=osstd|"
-    # README: needs LTO to fit, and the C library's nano variant
-    echo "bateske|CHChess|$GITHUB/CHChess|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
-    echo "bateske|CHPoker|$GITHUB/CHPoker|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
-    echo "bateske|CHMahjong|$GITHUB/CHMahjong|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
-    echo "bateske|CHCraps|$GITHUB/CHCraps|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
-    echo "bateske|CHRoulette|$GITHUB/CHRoulette|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
-    echo "bateske|CHBoardwalk|$GITHUB/CHBoardwalk|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
-    echo "bateske|CHBackgammon|$GITHUB/CHBackgammon|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
-    for g in CHWordWheel CHCrossword CHWords CHDominoes CHBingo CHSlots CHTicTacToe CHFour CHSnakes CHCheckers CHSolitaire; do
-        echo "bateske|$g|$GITHUB/$g|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
-    done
-    # its tools/device.py builds it without the USB menu setting
-    echo "bateske|CHYacht|$GITHUB/CHYacht|opt=oslto,rtlib=nano,periph=game|"
-    echo "bateske|CHSDtoUSB|$GITHUB/CHSDtoUSB|opt=osstd|"
     echo "poevoid|CHGame-Ponglike|$GITHUB/CHGame-Ponglike|opt=osstd|"
-    for ex in "$GITHUB"/CHGfx/examples/*/; do
+    for ex in "$CHGFX"/examples/*/; do
         echo "chgfx|$(basename "$ex")|$ex|opt=o2std|"
     done
     # the CHGame targets of each game's own release script, with their defines
@@ -122,10 +139,19 @@ EOF
     if [ -n "$SDLIB_OPT" ]; then
         set -- "$@" --library "$(winpath "$SDLIB_OPT")"
     fi
-    # everything builds against the latest CHGfx (the c:/github clone, pulled
-    # above), not whichever copy the sketchbook has
-    if [ -d "$GITHUB/CHGfx" ]; then
-        set -- "$@" --library "$(winpath "$GITHUB/CHGfx")"
+    # everything builds against CHGame's CHGfx (pulled above), not whichever
+    # copy the sketchbook has, and its CHGame library (CHGame.h: buttons,
+    # frame pacing, START held 3 s back to the SD game menu), which its games
+    # include since 2026-10-02 (its tools/device.py passes both)
+    if [ -d "$CHGFX" ]; then
+        set -- "$@" --library "$(winpath "$CHGFX")"
+    fi
+    if [ -d "$CHGAMELIB" ]; then
+        set -- "$@" --library "$(winpath "$CHGAMELIB")"
+    fi
+    # and CHSd, the third library its tools/device.py passes
+    if [ -d "$CHSDLIB" ]; then
+        set -- "$@" --library "$(winpath "$CHSDLIB")"
     fi
     if [ -n "$defines" ]; then
         set -- "$@" --build-property "compiler.c.extra_flags=$defines" --build-property "compiler.cpp.extra_flags=$defines"
@@ -141,7 +167,7 @@ EOF
         echo "FAILED  $group/$name  - $(grep -iE "error|overflow" "$log" | head -1 | cut -c1-150)"
     fi
 }
-export CLI CONFIG GITHUB WORK OUT BOARD
+export CLI CONFIG GITHUB WORK OUT BOARD CHGFX CHGAMELIB CHSDLIB
 
 # arduino-cli does not like several instances filling its caches at once on
 # a first run, so one build goes first and the rest follow in parallel

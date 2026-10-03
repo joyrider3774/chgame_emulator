@@ -11,7 +11,7 @@ struct ChgMachine;
    it checks. false: it is started at 0x3000 directly, with nothing below it */
 extern bool chg_use_bootloader;
 
-/* The bootloader put at 0x0000: a file of at most 12 KB (CHCasino's SD menu
+/* The bootloader put at 0x0000: a file of at most 12 KB (CHGame's SD menu
    bootloader, say) instead of the built-in one, which NULL brings back */
 bool chg_set_bootloader(const char *path, char *err, size_t errlen);
 /* The board as the bootloader leaves it with nothing installed: the

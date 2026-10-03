@@ -18,6 +18,21 @@
 #include <sys/stat.h>
 #include "sdcard.h"
 
+/* The volume label cards are made with. The CHGame and AKA emulators share
+   this file and each sets its own in CMake (SDCARD_LABEL, at most 11
+   characters, capitals as FAT keeps them) */
+#ifndef SDCARD_LABEL
+#define SDCARD_LABEL "SD CARD"
+#endif
+
+/* the label as FAT stores it: 11 characters, padded with spaces */
+static void put_label(uint8_t *p)
+{
+    const size_t n = strlen(SDCARD_LABEL);
+    memset(p, ' ', 11);
+    memcpy(p, SDCARD_LABEL, n < 11 ? n : 11);
+}
+
 #ifdef _WIN32
 #include <direct.h>
 #define make_dir(p) _mkdir(p)
@@ -131,7 +146,8 @@ static bool format(Out *o, uint64_t size, const Geo *g)
     s[64] = 0x80;
     s[66] = 0x29;
     put32(s + 67, 0x414B4131u);                         /* volume id */
-    memcpy(s + 71, "AKA SD     FAT32   ", 19);
+    put_label(s + 71);
+    memcpy(s + 82, "FAT32   ", 8);
     s[510] = 0x55; s[511] = 0xAA;
     if (!out_put(o, PART_LBA * (uint64_t)SECTOR, s, SECTOR) ||
         !out_put(o, (PART_LBA + 6) * (uint64_t)SECTOR, s, SECTOR)) return false;
@@ -165,7 +181,7 @@ static bool format(Out *o, uint64_t size, const Geo *g)
 
     /* the root directory: the volume label, then nothing */
     memset(s, 0, SECTOR);
-    memcpy(s, "AKA SD     ", 11);
+    put_label(s);
     s[11] = 0x08;
     put16(s + 24, FAT_DATE);
     if (!out_put(o, clus_off(g, 2), s, SECTOR)) return false;
@@ -348,7 +364,7 @@ static uint32_t import_dir(Build *b, const char *path, const char *rel, uint32_t
     memset(dir, 0, (size_t)nclus * cbytes);
     uint32_t at = 0;
     if (root) {
-        memcpy(dir, "AKA SD     ", 11);
+        put_label(dir);
         dir[11] = 0x08;
         at = 1;
     } else {

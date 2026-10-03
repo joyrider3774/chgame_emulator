@@ -86,8 +86,8 @@ Serve `build_web/` over http (browsers do not allow `fetch` from `file://`).
 `tools/make_web.sh serve` does all of it: builds, then serves the repository
 on http://127.0.0.1:8000/build_web/CHGame_Emulator.html with Python (so
 `?rom=../roms/bateske/CHChess.bin` works). The web build carries the games
-listed in `web/games.json` (its Games menu), the ones it had on 2026-10-02.
-Games added since are published on the games site, which has its own copy
+listed in `web/games.json` (its Games menu); other games are
+published on the games site only, which has its own copy
 of the emulator.
 Programs load from:
 
@@ -133,8 +133,8 @@ window that starts higher up the screen than the one before it.
 ./build/CHGame_Emulator chg/CHCHESS.CHG                                       # a package, directly
 ```
 
-`tools/build_bootloaders.sh` builds that bootloader from CHCasino's source
-(the `c:/github/CHCasino` clone, with the board package's toolchain) and
+`tools/build_bootloaders.sh` builds that bootloader from CHGame's source
+(the `c:/github/CHGame` clone, with the board package's toolchain) and
 puts the binary in `bootloaders/chgame_sdboot.bin`. `tools/make_chg.py`
 packs every ROM in `roms/` as a `.CHG` package into `chg/` (8.3 names,
 `chg/INDEX.TXT` lists them; `build_roms.sh` runs it at the end): copy them
@@ -143,9 +143,9 @@ like a `.bin`, after the same checks the bootloader makes.
 
 `--bootloader file.bin` puts another bootloader (at most 12 KB) at 0x0000
 instead of the built-in one, which stays the default. It was made for
-[CHCasino's SD menu bootloader](https://github.com/bateske/CHCasino/tree/main/platform/bootloader)
+[CHGame's SD menu bootloader](https://github.com/bateske/CHGame/tree/main/platform/bootloader)
 (`release/chgame_sdboot.bin`): at power-on it lists the `/GAMES/*.CHG`
-packages on the microSD card (`tools/chgpack.py` in CHCasino makes them from
+packages on the microSD card (`tools/chgpack.py` in CHGame makes them from
 a game's `.bin`), and A installs the chosen one into the program flash, the
 same way a USB upload writes it, then starts it.
 
@@ -155,7 +155,7 @@ whatever the games save afterwards, is kept in `<bootloader>.sav` beside the
 bootloader file, so the installed game is still there next time.
 
 **F4** goes back to the bootloader the way a game returns to the menu (a
-CHCasino game when START is held for 3 s): a software reset with no boot
+casino game in CHGame when START is held for 3 s): a software reset with no boot
 request pending. With the built-in bootloader it simply restarts the program.
 `chg_headless` takes the same option, `-` for no program, and
 `--back sec` for F4.

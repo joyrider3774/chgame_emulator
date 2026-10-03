@@ -2,7 +2,7 @@
 
     python tools/make_chg.py
 
-A CHG package (CHCasino's docs/chg-format.md) is what CHCasino's SD menu
+A CHG package (CHGame's docs/chg-format.md) is what CHGame's SD menu
 bootloader installs from a microSD card: a 512-byte header, then the program
 image padded with 0xFF to whole words. Copy chg/*.CHG into a card's GAMES
 folder and run the emulator with --bootloader chgame_sdboot.bin; or open a
@@ -70,6 +70,11 @@ def short_name(name, taken):
     return base
 
 
+def taken_files(index):
+    """the package file names an index lists"""
+    return {line.split()[0] for line in index}
+
+
 def title_of(name):
     """the menu's title: words in capitals (sokoban_3 -> SOKOBAN 3)"""
     return re.sub(r"[_-]+", " ", name).upper()[:19]
@@ -77,10 +82,7 @@ def title_of(name):
 
 def main():
     os.makedirs(OUT, exist_ok=True)
-    for f in os.listdir(OUT):
-        if f.upper().endswith(".CHG"):
-            os.remove(os.path.join(OUT, f))
-    taken, index, failed = set(), [], 0
+    taken, index, failed, written = set(), [], 0, []
     for group in sorted(d for d in os.listdir(ROMS) if os.path.isdir(os.path.join(ROMS, d))):
         for f in sorted(os.listdir(os.path.join(ROMS, group))):
             if not f.lower().endswith(".bin"):
@@ -93,13 +95,30 @@ def main():
                 failed += 1
                 continue
             short = short_name(name, taken) + ".CHG"
-            with open(os.path.join(OUT, short), "wb") as out:
-                out.write(data)
+            path = os.path.join(OUT, short)
+            # written only when it changes, and dated like its ROM, so the
+            # folder shows which games were rebuilt and when
+            if not os.path.exists(path) or open(path, "rb").read() != data:
+                with open(path, "wb") as out:
+                    out.write(data)
+                written.append(short)
+            rom_time = os.path.getmtime(os.path.join(ROMS, group, f))
+            os.utime(path, (rom_time, rom_time))
             index.append("%-12s %-20s roms/%s/%s" % (short, title_of(name), group, f))
-    with open(os.path.join(OUT, "INDEX.TXT"), "w", newline="\n") as out:
-        out.write("CHG packages made by tools/make_chg.py from roms/: file, menu title, ROM\n\n")
-        out.write("\n".join(index) + "\n")
-    print("%d packages in %s%s" % (len(index), OUT, ", %d skipped" % failed if failed else ""))
+    # packages of ROMs that are gone
+    for f in os.listdir(OUT):
+        if f.upper().endswith(".CHG") and f not in taken_files(index):
+            os.remove(os.path.join(OUT, f))
+            print("removed %s" % f)
+    text_index = ("CHG packages made by tools/make_chg.py from roms/: file, menu title, ROM\n\n"
+                  + "\n".join(index) + "\n")
+    index_path = os.path.join(OUT, "INDEX.TXT")
+    if not os.path.exists(index_path) or open(index_path, encoding="utf-8").read() != text_index:
+        with open(index_path, "w", newline="\n") as out:
+            out.write(text_index)
+    print("%d packages in %s, %d new or changed%s%s" % (
+        len(index), OUT, len(written), ": " + " ".join(written) if written else "",
+        ", %d skipped" % failed if failed else ""))
     return 1 if failed else 0
 
 

@@ -26,6 +26,8 @@ add_library(chgame_core STATIC
     src/bootloader_image.c
 )
 target_include_directories(chgame_core PUBLIC src)
+# the volume label of the cards the emulator makes
+target_compile_definitions(chgame_core PRIVATE "SDCARD_LABEL=\"CHGAME\"")
 
 if(NOT MSVC)
     target_compile_options(chgame_core PRIVATE -Wall -Wextra -Wno-unused-parameter)

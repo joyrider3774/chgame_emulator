@@ -39,7 +39,7 @@ void chg_reset(ChgMachine *m, bool power_on)
     }
     /* The reset cause in RCC RSTSCKR. A power-on reads as pin, power-on and
        software reset together: on the board the factory boot code runs first
-       and enters user flash with a software reset (measured, CHCasino's
+       and enters user flash with a software reset (measured, CHGame's
        bootloader, test/hil/RESULTS-2026-10-01.md), which is why the SD menu
        bootloader tells a power-on by PORRSTF alone. A software reset
        (PFIC SYSRESET: a program returning to the bootloader) adds its flag

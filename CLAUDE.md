@@ -40,9 +40,9 @@ Modelled on the owner's earlier TinyJoypad emulator
 | `web/sdcard.html`, `web/sdtools.js` | the card manager page (`?card=chgame`) and the zip / FAT-image reader + zip writer. **Identical copies in aka_emulator/web: change both.** The manager edits the IDBFS database (`/chgame/sdcard`, store `FILE_DATA`, key = full path, `{timestamp, mode, contents}`) directly; the overlay ejects the card (`chg_web_sd_eject`, pauses) and reinserts it after `syncfs(true)` |
 | `tools/headless.c` | `chg_headless`: run without a window, report speed, dump screen/RAM/registers |
 | `tools/build_roms.sh` | builds every known CHGame program into `roms/` (gitignored), then runs `make_chg.py` |
-| `tools/make_chg.py` | every ROM as a `.CHG` package (CHCasino's SD menu format) into `chg/` (gitignored), 8.3 names, `chg/INDEX.TXT` |
-| `tools/build_bootloaders.sh` | builds CHCasino's SD menu bootloader (release) in a temp copy, only the binary to `bootloaders/chgame_sdboot.bin` (gitignored) |
-| `tools/make_web.sh` | Emscripten build + the games listed in `web/games.json` (frozen at the 46 it had on 2026-10-02: the owner wants new games only on the games site, `c:/github/chgames`, `tools/build_site.py`), `serve` to host with Python |
+| `tools/make_chg.py` | every ROM as a `.CHG` package (CHGame's SD menu format) into `chg/` (gitignored), 8.3 names, `chg/INDEX.TXT` |
+| `tools/build_bootloaders.sh` | builds CHGame's SD menu bootloader (release) in a temp copy, only the binary to `bootloaders/chgame_sdboot.bin` (gitignored) |
+| `tools/make_web.sh` | Emscripten build + the games listed in `web/games.json` (58, kept by hand: new games go on the games site only unless the owner asks, `c:/github/chgames`, `tools/build_site.py`), `serve` to host with Python |
 | `tests/xw_test.c`, `tests/xw_golden.txt` | XW decoder vs WCH's own assembler output |
 | `tests/sketches/chg_cal/` | **the calibration sketch** the cycle model is fitted to (51 asm loops) |
 | `tests/sketches/chg_bench/` | quick 9-loop timing check shown on the LCD (`chg_bench.bin` prebuilt) |
@@ -70,9 +70,21 @@ Modelled on the owner's earlier TinyJoypad emulator
   Node drives it for web tests.
 - Game sources: only `c:/github/*_embedded` are the owner's CHGame games
   (don't grep all of `c:/github` — hundreds of unrelated repos). Others cloned
-  next to this repo: bateske's `CHBlackjack NewBlocksColor CH32Doom CHSpriteView
-  CHMultiSprite CHStlView CHSDtoUSB FileBrowser CHGfx CH32SerialBoot`, and
-  `CHGame-Ponglike` (poevoid).
+  next to this repo: **bateske's `CHGame`**, the source of truth since
+  2026-10-02 (board package source, the SD menu bootloader; since 2026-10-03
+  the libraries sit in the board package, `platform/board/arduino/CHGame/libraries/`
+  {CHGfx, CHSd, CHGame}, the twenty casino games are the CHGame library's
+  `examples/games/`, CHSDtoUSB its `examples/apps/`; builds pass all three
+  libraries with `--library`; his
+  separate game repositories and CHGfx/CHCasino are frozen), and for what is
+  not in it bateske's `NewBlocksColor CH32Doom CHMultiSprite FileBrowser`
+  (CHStlView moved into CHGame's Apps), `CHGame-Ponglike` (poevoid) and
+  filmote's `CHSpriteView` in `c:/github/filmote/CHSpriteView` (the original;
+  bateske's `c:/github/CHSpriteView` is a modified copy, no longer built; the
+  sketch folder must keep the .ino's name, hence the subfolder). The board package
+  is still the released 0.2.4 from the CH32SerialBoot URL: CHGame has no
+  release yet (the owner waits for one before switching his games' release
+  tools and GitHub actions).
 
 ## Build and verify
 
@@ -188,8 +200,8 @@ the `ALIGN4` macro in `bench.S`), and use `.option norelax`.
 - **Saves**: flash pages the program writes go to `<rom>.sav`
   (4-byte address + 256 bytes, repeated); on the web IndexedDB `/chgame/saves`, the card `/chgame/sdcard` (IDBFS names the database after the mount point; the AKA emulator on the same site uses `/aka/...`. Builds before 2026-10-01 used the shared `/sdcard` and `/saves`: the page copies the old saves in once, see `fromShared` in shell.html).
 - **Other bootloaders** (`--bootloader file.bin`, `chg_set_bootloader()` in
-  loader.c; the built-in one stays the default). Made for CHCasino's SD menu
-  bootloader (`c:/github/CHCasino/platform/bootloader/release/chgame_sdboot.bin`):
+  loader.c; the built-in one stays the default). Made for CHGame's SD menu
+  bootloader (`c:/github/CHGame/platform/bootloader/release/chgame_sdboot.bin`):
   it installs `/GAMES/*.CHG` packages into app flash through the flash
   controller. Without a program the flash starts erased with only the
   bootloader (`chg_load_bootloader_only()`), and its `.sav` is
@@ -201,8 +213,8 @@ the `ALIGN4` macro in `bench.S`), and use `.option norelax`.
   fast programming after every page and unlocks before the next; with the
   stored bit, only its first page was ever written). F4 / `chg_headless
   --back T` clear the boot request block (RAM 0x20000000, magic + ~magic) and
-  do a software reset, as a CHCasino game holding START does. Test card:
-  pack built ROMs with `python c:/github/CHCasino/tools/chgpack.py pack
+  do a software reset, as a CHGame casino game holding START does. Test card:
+  pack built ROMs with `python c:/github/CHGame/tools/chgpack.py pack
   X.bin GAMES/X.CHG --title X`, run `chg_headless - 20 NUL --bootloader
   <copy of chgame_sdboot.bin> --sd card --press a@4 --save --shots s`.
 - **USB** is a dumb register block: the core's CDC code runs, nothing

@@ -53,10 +53,10 @@ for page in (html, "build_web/sdcard.html"):
 print("build", build)
 PY
 
-# The emulator keeps the games it had on 2026-10-02, listed in web/games.json
-# (its Games menu), and only those: games added to roms/ since then are
-# published on the games site (c:/github/chgames, tools/build_site.py), not
-# here. Add a game to web/games.json to put it on this page after all.
+# The emulator carries only the games listed in web/games.json (its Games
+# menu): new games in roms/ are published on the games site (c:/github/chgames,
+# tools/build_site.py) and come here only when added to that list by hand (the
+# twelve CHGame casino games not yet in it were added on 2026-10-03).
 # roms/ is not in git, so a build from a fresh checkout (the GitHub Action)
 # has none of them: the menu then lists only the games that are there.
 rm -rf build_web/roms build_web/games.json

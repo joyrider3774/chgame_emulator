@@ -899,7 +899,7 @@ static void flash_ctl_write(ChgMachine *m, uint32_t off, uint32_t v)
         /* LOCK and FLOCK are not kept as written: they read as the lock state
            (see flash_ctl_read). Kept, the FLOCK of a "CTLR |= FLOCK" would
            come back with the next read-modify-write after the mode keys had
-           unlocked fast programming, and lock it again: CHCasino's
+           unlocked fast programming, and lock it again: CHGame's
            bootloader locks after every page and unlocks before the next, and
            only its first page was written */
         f->ctlr = v & ~(FL_STRT | FL_BUF_LOAD | FL_BUF_RST | FL_LOCK | FL_FLOCK);

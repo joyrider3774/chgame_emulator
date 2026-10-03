@@ -8,7 +8,7 @@
  *          bootloader included, and then runs from 0x0000
  *   .hex   Intel HEX, placed where its addresses say
  *   .elf   the loadable segments, at their load addresses
- *   .chg   a game package for CHCasino's SD menu bootloader ("CHG1": a
+ *   .chg   a game package for CHGame's SD menu bootloader ("CHG1": a
  *          512-byte header, then the .bin), checked as that bootloader
  *          checks it; its program goes to 0x3000 like a .bin
  *
@@ -227,7 +227,7 @@ static void install_bootloader(ChgMachine *m, uint32_t length)
     put32(meta + 28, 0);
 }
 
-/* A .CHG game package (CHCasino's docs/chg-format.md), what the SD menu
+/* A .CHG game package (CHGame's docs/chg-format.md), what the SD menu
    bootloader installs from the card: a 512-byte header, then the program
    image padded to whole words. Checked as that bootloader checks it, in its
    order; the payload is returned in place */

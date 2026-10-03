@@ -181,7 +181,7 @@ static bool load_program(App *app, const char *path)
 }
 
 /* No program: the board as a bootloader with a game menu leaves it, which
-   installs games from the card itself (CHCasino's SD menu bootloader). What
+   installs games from the card itself (CHGame's SD menu bootloader). What
    it flashes, and what the games then save, is kept in <bootloader>.sav, so
    the installed game is still there next time, as on the device */
 static bool boot_bootloader_only(App *app, const char *boot_path)
@@ -205,7 +205,7 @@ static bool boot_bootloader_only(App *app, const char *boot_path)
 }
 
 /* F4: back to the bootloader, the way a program returns to the game menu (a
-   CHCasino game when START is held): a software reset with no boot request
+   casino game in CHGame when START is held): a software reset with no boot request
    pending, so the bootloader does not start the program straight away */
 static void back_to_bootloader(App *app)
 {
