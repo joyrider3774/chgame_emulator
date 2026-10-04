@@ -42,6 +42,7 @@ static const char *help_text[] = {
     "+ / -            volume",
     "F7               piezo sound / bare pin signal",
     "F9               stats overlay",
+    "F8               scaling: fill the window / whole multiples",
     "F10              screenshot",
     "F11, Alt+Enter   fullscreen",
     "Esc              quit",
@@ -76,6 +77,7 @@ typedef struct {
     bool loaded;
     bool paused;
     bool help;
+    bool integer_scale;     /* whole multiples of 128 only (F8, --integer-scale); off: fill the window */
     char message[256];
     Uint64 message_until;
     Uint64 last_ticks;
@@ -101,6 +103,58 @@ static void show_message(App *app, const char *fmt, ...)
     SDL_vsnprintf(app->message, sizeof app->message, fmt, ap);
     va_end(ap);
     app->message_until = SDL_GetTicks() + 2500;
+}
+
+/* Whole multiples sample the nearest pixel. At any other size nearest sampling makes some pixel
+   rows and columns one screen pixel wider than others; SDL's pixel art mode keeps every pixel the
+   same size, blending only along its edges */
+static void set_scale_mode(App *app)
+{
+    SDL_SetTextureScaleMode(app->screen, app->integer_scale ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_PIXELART);
+}
+
+/* The scaling choice is kept between runs: natively in settings.txt in SDL's per-user folder, in the
+   browser in localStorage (the IDBFS mounts hold only saves and the card) */
+#define SETTINGS_ORG "joyrider3774"
+#define SETTINGS_APP "chgame_emulator"
+
+static bool load_integer_scale(void)
+{
+#ifdef __EMSCRIPTEN__
+    return EM_ASM_INT({
+        try { return localStorage.getItem('chgame_integer_scale') === '1' ? 1 : 0; } catch (e) { return 0; }
+    });
+#else
+    bool on = false;
+    char *dir = SDL_GetPrefPath(SETTINGS_ORG, SETTINGS_APP);
+    if (dir) {
+        char path[1024];
+        SDL_snprintf(path, sizeof path, "%ssettings.txt", dir);
+        char *text = SDL_LoadFile(path, NULL);
+        if (text) {
+            on = SDL_strstr(text, "integer_scale=1") != NULL;
+            SDL_free(text);
+        }
+        SDL_free(dir);
+    }
+    return on;
+#endif
+}
+
+static void save_integer_scale(bool on)
+{
+#ifdef __EMSCRIPTEN__
+    EM_ASM({ try { localStorage.setItem('chgame_integer_scale', $0 ? '1' : '0'); } catch (e) {} }, on);
+#else
+    char *dir = SDL_GetPrefPath(SETTINGS_ORG, SETTINGS_APP);
+    if (dir) {
+        char path[1024];
+        const char *text = on ? "integer_scale=1\n" : "integer_scale=0\n";
+        SDL_snprintf(path, sizeof path, "%ssettings.txt", dir);
+        SDL_SaveFile(path, text, SDL_strlen(text));
+        SDL_free(dir);
+    }
+#endif
 }
 
 static void write_save(App *app)
@@ -373,7 +427,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     }
     SDL_SetRenderVSync(app->renderer, 1);
     app->screen = SDL_CreateTexture(app->renderer, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, 128, 128);
-    SDL_SetTextureScaleMode(app->screen, SDL_SCALEMODE_NEAREST);
 
     SDL_AudioSpec spec = { SDL_AUDIO_F32, 1, AUDIO_RATE };
     app->audio_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
@@ -415,6 +468,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
 #endif
 
     const char *program = NULL, *bootloader = NULL;
+    app->integer_scale = load_integer_scale();
     for (int i = 1; i < argc; i++) {
         if (!SDL_strcmp(argv[i], "--no-bootloader")) chg_use_bootloader = false;
         else if (!SDL_strcmp(argv[i], "--bootloader") && i + 1 < argc) bootloader = argv[++i];
@@ -423,8 +477,11 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         else if (!SDL_strcmp(argv[i], "--sd") && i + 1 < argc) SDL_strlcpy(app->sd_path, argv[++i], sizeof app->sd_path);
         else if (!SDL_strcmp(argv[i], "--sd-size") && i + 1 < argc) app->sd_mb = (uint32_t)SDL_atoi(argv[++i]);
         else if (!SDL_strcmp(argv[i], "--no-sd")) app->sd_path[0] = 0;
+        else if (!SDL_strcmp(argv[i], "--integer-scale")) app->integer_scale = true;
+        else if (!SDL_strcmp(argv[i], "--no-integer-scale")) app->integer_scale = false;
         else if (argv[i][0] != '-' && !program) program = argv[i];
     }
+    set_scale_mode(app);
 #ifndef __EMSCRIPTEN__
     insert_sd(app);
 #endif
@@ -490,6 +547,12 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
             app->raw_sound = !app->raw_sound;
             app->audio.piezo = !app->raw_sound;
             show_message(app, app->raw_sound ? "Sound: the bare pin signal" : "Sound: through the piezo");
+            break;
+        case SDLK_F8:
+            app->integer_scale = !app->integer_scale;
+            set_scale_mode(app);
+            save_integer_scale(app->integer_scale);
+            show_message(app, app->integer_scale ? "Scaling: whole multiples" : "Scaling: fill the window");
             break;
         case SDLK_F9: app->stats = !app->stats; break;
         case SDLK_F10: screenshot(app); break;
@@ -633,8 +696,10 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     const bool full = (SDL_GetWindowFlags(app->window) & SDL_WINDOW_FULLSCREEN) != 0;
     const int bar = full ? 0 : BAR_H;
     int avail_h = h - bar;
+    /* the screen as big as the window allows; with integer scaling the largest whole multiple of
+       128 that fits (below 128 it shrinks either way) */
     int scale = SDL_min(w / 128, avail_h / 128);
-    float size = scale >= 1 ? (float)(scale * 128) : (float)SDL_min(w, avail_h);
+    float size = (app->integer_scale && scale >= 1) ? (float)(scale * 128) : (float)SDL_min(w, avail_h);
     SDL_FRect dst = { (w - size) / 2.0f, (avail_h - size) / 2.0f, size, size };
 
     st7735_render(&app->m->lcd, app->pixels);

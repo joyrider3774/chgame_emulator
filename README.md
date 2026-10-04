@@ -118,6 +118,7 @@ or drop a file on the window, or press F3.
 | Back to the bootloader (game menu) | F4 |
 | Pause / fast forward | P / hold Tab |
 | Stats overlay (game fps, speed, MIPS, host load) | F9 |
+| Scaling: fill the window / whole multiples only; remembered (`--integer-scale`, `--no-integer-scale` for one run) | F8 |
 | Screenshot | F10 |
 | Fullscreen | F11 or Alt+Enter |
 | Volume | + / - |
