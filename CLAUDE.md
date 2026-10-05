@@ -35,7 +35,8 @@ Modelled on the owner's earlier TinyJoypad emulator
 | `src/bootloader_image.c` | the real CHGame bootloader (MIT), generated from the board package `.bin` — do not edit |
 | `src/sdspi.c` | the microSD card in SPI mode: command frames, R1/R3/R7, data tokens, CMD18 streaming, CMD24/25 writes. Selected by PB11 low in `spi_deliver()` (bus.c) |
 | `src/sdcard.c` | card storage, image file or folder built into an in-memory FAT32 card and synced back, formatter, `sdcard_make_image` |
-| `src/main.c` | SDL3 front end using SDL main callbacks (works under Emscripten unchanged) |
+| `src/main.c` | SDL3 front end using SDL main callbacks (works under Emscripten unchanged); F6 GIF recording (save dialog natively, showSaveFilePicker or a download in the browser) |
+| `src/gif.c/.h` | GIF encoder, shared with the ESPboy emulator: per-frame exact palette (3-3-2 when over 256 colours), identical frames merged, emulated-time delays; `chg_headless --gif out.gif` |
 | `web/shell.html` | page around the web build: file picker, URL box, `?rom=`, `?sd=`, `games.json` menu, card manager overlay |
 | `web/sdcard.html`, `web/sdtools.js` | the card manager page (`?card=chgame`) and the zip / FAT-image reader + zip writer. **Identical copies in aka_emulator/web: change both.** The manager edits the IDBFS database (`/chgame/sdcard`, store `FILE_DATA`, key = full path, `{timestamp, mode, contents}`) directly; the overlay ejects the card (`chg_web_sd_eject`, pauses) and reinserts it after `syncfs(true)` |
 | `tools/headless.c` | `chg_headless`: run without a window, report speed, dump screen/RAM/registers |

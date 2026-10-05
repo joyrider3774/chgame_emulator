@@ -120,6 +120,7 @@ or drop a file on the window, or press F3.
 | Stats overlay (game fps, speed, MIPS, host load) | F9 |
 | Scaling: fill the window / whole multiples only; remembered (`--integer-scale`, `--no-integer-scale` for one run) | F8 |
 | Screenshot | F10 |
+| Record a GIF; press again to stop and choose where to save it | F6 |
 | Fullscreen | F11 or Alt+Enter |
 | Volume | + / - |
 

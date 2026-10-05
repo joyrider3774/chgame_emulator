@@ -18,6 +18,7 @@ add_library(chgame_core STATIC
     src/bus.c
     src/machine.c
     src/st7735.c
+    src/gif.c
     src/audio.c
     src/piezo_filter.c
     src/loader.c

@@ -14,6 +14,7 @@
 #include "sdcard.h"
 #include "loader.h"
 #include "audio.h"
+#include "gif.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -73,7 +74,7 @@ int main(int argc, char **argv)
     }
     if (argc < 2) {
         fprintf(stderr, "usage: chg_headless game.bin|- [seconds] [out.ppm] [--press btn@sec[:dur]]... "
-                        "[--shots prefix] [--save] [--sd folder|card.img]\n"
+                        "[--shots prefix] [--gif out.gif] [--save] [--sd folder|card.img]\n"
                         "                    [--bootloader boot.bin] [--back sec]...\n"
                         "       chg_headless --sd-make card.img [folder] [MB]\n"
                         "  - for the program: the bootloader alone, program flash erased (an SD menu\n"
@@ -110,6 +111,7 @@ int main(int argc, char **argv)
     double seconds = 5;
     const char *out = "screen.ppm";
     const char *shots = NULL;
+    const char *gif_path = NULL;    /* --gif out.gif: the screen recorded, as F6 does */
     const char *wav_path = NULL;
     bool no_piezo = true;      /* the bare pin signal; --piezo for the piezo filter */
     bool save = false;
@@ -152,6 +154,8 @@ int main(int argc, char **argv)
             }
         } else if (!strcmp(argv[i], "--shots") && i + 1 < argc) {
             shots = argv[++i];
+        } else if (!strcmp(argv[i], "--gif") && i + 1 < argc) {
+            gif_path = argv[++i];
         } else if (!strcmp(argv[i], "--wav") && i + 1 < argc) {
             wav_path = argv[++i];
         } else if (!strcmp(argv[i], "--no-piezo")) {
@@ -188,6 +192,9 @@ int main(int argc, char **argv)
     uint64_t instr_est = 0;
     int shot = 0;
     static uint32_t px[128 * 128];
+    Gif gif;
+    const bool recording = gif_path && gif_begin(&gif, 128, 128);
+    uint64_t gif_last = m.cycles, gif_next = m.cycles;
     while (m.cycles < total) {
         const double t = (double)m.cycles / CHG_HCLK;
         if (next_back < nback && t >= backs[next_back]) {
@@ -212,6 +219,13 @@ int main(int argc, char **argv)
             }
             wav_samples += (uint32_t)n;
         }
+        /* the screen every 1/60 s, as the window shows it */
+        if (recording && m.cycles >= gif_next) {
+            st7735_render(&m.lcd, px);
+            gif_frame(&gif, px, (double)(m.cycles - gif_last) / CHG_HCLK);
+            gif_last = m.cycles;
+            gif_next += CHG_HCLK / 60;
+        }
         if (shots && (int)t != shot) {
             shot = (int)t;
             char name[512];
@@ -221,6 +235,13 @@ int main(int argc, char **argv)
         }
     }
     const double wall = now_s() - t0;
+    if (recording) {
+        size_t n = 0;
+        uint8_t *data = gif_end(&gif, &n);
+        FILE *f = data ? fopen(gif_path, "wb") : NULL;
+        if (f) { fwrite(data, 1, n, f); fclose(f); }
+        free(data);
+    }
     if (wav) {
         /* the RIFF header, now the length is known */
         uint8_t h[44];

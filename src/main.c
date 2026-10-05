@@ -14,11 +14,13 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "machine.h"
 #include "loader.h"
 #include "audio.h"
 #include "sdcard.h"
+#include "gif.h"
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -40,9 +42,10 @@ static const char *help_text[] = {
     "F4               back to the bootloader (game menu)",
     "P  /  hold Tab   pause / fast forward",
     "+ / -            volume",
+    "F6               record a GIF / stop and save it",
     "F7               piezo sound / bare pin signal",
-    "F9               stats overlay",
     "F8               scaling: fill the window / whole multiples",
+    "F9               stats overlay",
     "F10              screenshot",
     "F11, Alt+Enter   fullscreen",
     "Esc              quit",
@@ -94,6 +97,10 @@ typedef struct {
     Uint64 sd_synced;
     bool sd_ejected;                /* web: the card manager has the card */
     bool paused_before_eject;
+    /* F6: the screen recorded as an animated GIF */
+    Gif gif;
+    bool recording;
+    uint64_t gif_cycle;     /* emulated time of the last frame recorded */
 } App;
 
 static void show_message(App *app, const char *fmt, ...)
@@ -365,6 +372,132 @@ static void screenshot(App *app)
     SDL_DestroySurface(s);
 }
 
+/* ------------------------------------------------------------------------ */
+/* GIF recording (F6)                                                        */
+/* ------------------------------------------------------------------------ */
+
+typedef struct { uint8_t *data; size_t size; } GifFile;
+
+/* the program's path without its extension, for names of files made from it */
+static void program_stem(App *app, char *out, size_t n)
+{
+    SDL_strlcpy(out, app->loaded ? app->program : "chgame", n);
+    char *dot = SDL_strrchr(out, '.');
+    char *slash = SDL_strrchr(out, '/');
+    char *bslash = SDL_strrchr(out, '\\');
+    if (bslash > slash) slash = bslash;
+    if (dot && (!slash || dot > slash)) *dot = 0;
+}
+
+/* a name next to the program that is not taken yet: <program>_NNN.gif */
+static void gif_name(App *app, char *out, size_t n)
+{
+    char stem[1024];
+    program_stem(app, stem, sizeof stem);
+    for (int i = 0; i < 1000; i++) {
+        SDL_snprintf(out, n, "%s_%03d.gif", stem, i);
+        SDL_IOStream *probe = SDL_IOFromFile(out, "rb");
+        if (!probe) return;
+        SDL_CloseIO(probe);
+    }
+}
+
+#ifndef __EMSCRIPTEN__
+static void SDLCALL gif_save_chosen(void *userdata, const char *const *files, int filter)
+{
+    (void)filter;
+    GifFile *f = userdata;
+    if (files && files[0]) {
+        char path[1100];
+        SDL_strlcpy(path, files[0], sizeof path);
+        /* the dialog may leave the extension off */
+        const size_t len = SDL_strlen(path);
+        if (len < 4 || SDL_strcasecmp(path + len - 4, ".gif")) SDL_strlcat(path, ".gif", sizeof path);
+        SDL_IOStream *io = SDL_IOFromFile(path, "wb");
+        if (io) {
+            SDL_WriteIO(io, f->data, f->size);
+            SDL_CloseIO(io);
+        }
+    }
+    free(f->data);
+    SDL_free(f);
+}
+#endif
+
+static void gif_toggle(App *app)
+{
+    if (!app->recording) {
+        if (!gif_begin(&app->gif, 128, 128)) {
+            show_message(app, "GIF: out of memory");
+            return;
+        }
+        app->recording = true;
+        app->gif_cycle = app->m->cycles;
+        show_message(app, "Recording a GIF - F6 to stop");
+        return;
+    }
+    app->recording = false;
+    size_t size = 0;
+    uint8_t *data = gif_end(&app->gif, &size);
+    if (!data) {
+        show_message(app, "GIF: nothing recorded");
+        return;
+    }
+    char name[1100];
+    gif_name(app, name, sizeof name);
+#ifdef __EMSCRIPTEN__
+    /* the browser asks where to save it (or downloads it) */
+    const char *base = SDL_strrchr(name, '/');
+    EM_ASM({
+        var bytes = HEAPU8.slice($0, $0 + $1);
+        var name = UTF8ToString($2);
+        var blob = new Blob([bytes], { type: 'image/gif' });
+        function download() {
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = name;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 10000);
+        }
+        if (window.showSaveFilePicker) {
+            window.showSaveFilePicker({ suggestedName: name, types: [{ description: 'GIF image', accept: { 'image/gif': ['.gif'] } }] })
+                .then(function (h) { return h.createWritable(); })
+                .then(function (w) { return w.write(blob).then(function () { return w.close(); }); })
+                .catch(function (e) { if (e.name !== 'AbortError') download(); });
+        } else {
+            download();
+        }
+    }, data, (int)size, base ? base + 1 : name);
+    free(data);
+    show_message(app, "GIF recorded");
+#else
+    GifFile *f = SDL_malloc(sizeof(GifFile));
+    if (!f) { free(data); return; }
+    f->data = data;
+    f->size = size;
+    static const SDL_DialogFileFilter filters[] = { { "GIF images", "gif" } };
+    SDL_ShowSaveFileDialog(gif_save_chosen, f, app->window, filters, 1, name);
+    show_message(app, "GIF recorded - choose where to save it");
+#endif
+}
+
+/* this frame of the screen, as long as emulated time has gone on since the last */
+static void gif_capture(App *app)
+{
+    if (!app->recording) return;
+    const uint64_t now = app->m->cycles;
+    const double secs = now > app->gif_cycle ? (double)(now - app->gif_cycle) / CHG_HCLK : 0.0;
+    app->gif_cycle = now;
+    gif_frame(&app->gif, app->pixels, secs);
+    if (app->gif.failed) {
+        gif_abort(&app->gif);
+        app->recording = false;
+        show_message(app, "GIF: out of memory, recording stopped");
+    }
+}
+
 static uint8_t keyboard_buttons(void)
 {
     const bool *k = SDL_GetKeyboardState(NULL);
@@ -543,6 +676,7 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
             app->paused = !app->paused;
             show_message(app, app->paused ? "Paused" : "Running");
             break;
+        case SDLK_F6: gif_toggle(app); break;
         case SDLK_F7:
             app->raw_sound = !app->raw_sound;
             app->audio.piezo = !app->raw_sound;
@@ -703,6 +837,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     SDL_FRect dst = { (w - size) / 2.0f, (avail_h - size) / 2.0f, size, size };
 
     st7735_render(&app->m->lcd, app->pixels);
+    gif_capture(app);
     SDL_UpdateTexture(app->screen, NULL, app->pixels, 128 * 4);
     SDL_RenderTexture(r, app->screen, NULL, &dst);
 
@@ -758,6 +893,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
     (void)result;
     App *app = appstate;
     if (!app) return;
+    if (app->recording) gif_abort(&app->gif);
     write_save(app);
     sdcard_close(app->m->sd);
     app->m->sd = NULL;
