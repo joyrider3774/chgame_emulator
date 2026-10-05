@@ -168,6 +168,14 @@
   "name": "joyrider3774 / blockdude_2"
  },
  {
+  "file": "roms/joyrider3774/BunnyMark.bin",
+  "name": "joyrider3774 / BunnyMark"
+ },
+ {
+  "file": "roms/joyrider3774/chg_lcdtest.bin",
+  "name": "joyrider3774 / chg_lcdtest"
+ },
+ {
   "file": "roms/joyrider3774/formula1.bin",
   "name": "joyrider3774 / formula1"
  },

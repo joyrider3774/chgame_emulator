@@ -82,7 +82,7 @@ typedef struct {
     Uint64 message_until;
     Uint64 last_ticks;
     double wall_carry;
-    uint16_t pixels[128 * 128];
+    uint32_t pixels[128 * 128];     /* the glass, XRGB8888 */
     float samples[AUDIO_RATE];
     SDL_Gamepad *pads[8];
     uint8_t pad_buttons;
@@ -351,7 +351,7 @@ static void open_dialog(App *app)
 
 static void screenshot(App *app)
 {
-    SDL_Surface *s = SDL_CreateSurfaceFrom(128, 128, SDL_PIXELFORMAT_RGB565, app->pixels, 256);
+    SDL_Surface *s = SDL_CreateSurfaceFrom(128, 128, SDL_PIXELFORMAT_XRGB8888, app->pixels, 128 * 4);
     if (!s) return;
     char path[1200];
     for (int i = 0; i < 1000; i++) {
@@ -426,7 +426,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         return SDL_APP_FAILURE;
     }
     SDL_SetRenderVSync(app->renderer, 1);
-    app->screen = SDL_CreateTexture(app->renderer, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, 128, 128);
+    app->screen = SDL_CreateTexture(app->renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, 128, 128);
 
     SDL_AudioSpec spec = { SDL_AUDIO_F32, 1, AUDIO_RATE };
     app->audio_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
@@ -703,7 +703,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     SDL_FRect dst = { (w - size) / 2.0f, (avail_h - size) / 2.0f, size, size };
 
     st7735_render(&app->m->lcd, app->pixels);
-    SDL_UpdateTexture(app->screen, NULL, app->pixels, 128 * 2);
+    SDL_UpdateTexture(app->screen, NULL, app->pixels, 128 * 4);
     SDL_RenderTexture(r, app->screen, NULL, &dst);
 
     if (!full) {

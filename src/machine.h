@@ -203,11 +203,12 @@ typedef struct {
 /* ST7735S                                                                   */
 /* ------------------------------------------------------------------------ */
 
-#define ST7735_COLS 132
-#define ST7735_ROWS 162
+#define ST7735_COLS  132
+#define ST7735_ROWS  162            /* frame memory rows */
+#define ST7735_LINES 132            /* rows the panel shows and MY mirrors over (GM=01) */
 
 typedef struct {
-    uint16_t gram[ST7735_ROWS][ST7735_COLS];    /* RGB565 as it is on the glass */
+    uint32_t gram[ST7735_ROWS][ST7735_COLS];    /* 18 bit as the frame memory holds it: R 17:12, G 11:6, B 5:0 */
     uint8_t  cmd;
     int      nparam;
     uint8_t  param[16];
@@ -218,6 +219,10 @@ typedef struct {
     int      npix;
     uint8_t  madctl, colmod;
     bool     sleeping, display_on, inverted, idle;
+    bool     partial, scrolling;
+    uint16_t psl, pel;          /* PTLAR: the rows partial mode shows */
+    uint16_t tfa, vsa, bfa;     /* SCRLAR: top fixed, scrolling and bottom fixed lines */
+    uint16_t ssa;               /* VSCSAD: the line shown first after the top fixed area */
     bool     rst_level;
     uint32_t frames_written;    /* times the address counter wrapped a whole window */
     uint32_t frame_starts;      /* times a RAMWR window went back up the screen: a new frame */
@@ -317,8 +322,9 @@ bool     gpio_pin(ChgMachine *m, int port, int pin);
 void     buzzer_update(ChgMachine *m);
 
 /* st7735.c */
+void     st7735_power_on(ChgSt7735 *lcd);
 void     st7735_reset(ChgSt7735 *lcd);
 void     st7735_byte(ChgSt7735 *lcd, bool dc, uint8_t byte);
-void     st7735_render(const ChgSt7735 *lcd, uint16_t out[128 * 128]);
+void     st7735_render(const ChgSt7735 *lcd, uint32_t out[128 * 128]);
 
 #endif

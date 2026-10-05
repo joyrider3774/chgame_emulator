@@ -102,6 +102,9 @@ fi
     if [ -d "$GITHUB/bunnymark_ports/chgame/BunnyMark" ]; then
         echo "joyrider3774|BunnyMark|$GITHUB/bunnymark_ports/chgame/BunnyMark|opt=o2std,periph=game,usb=uploadonly|"
     fi
+    # this repository's display check (16 steps on A), to compare the
+    # emulator with a device
+    echo "joyrider3774|chg_lcdtest|$HERE/tests/sketches/chg_lcdtest|opt=o2std,usb=uploadonly|"
     for ex in "$CHGFX"/examples/*/; do
         echo "chgfx|$(basename "$ex")|$ex|opt=o2std|"
     done

@@ -33,14 +33,14 @@ static double now_s(void)
 }
 #endif
 
-static void write_ppm(const char *path, const uint16_t *px)
+static void write_ppm(const char *path, const uint32_t *px)
 {
     FILE *f = fopen(path, "wb");
     if (!f) return;
     fprintf(f, "P6\n128 128\n255\n");
     for (int i = 0; i < 128 * 128; i++) {
-        const uint16_t c = px[i];
-        const uint8_t rgb[3] = { (uint8_t)((c >> 11) * 255 / 31), (uint8_t)(((c >> 5) & 63) * 255 / 63), (uint8_t)((c & 31) * 255 / 31) };
+        const uint32_t c = px[i];
+        const uint8_t rgb[3] = { (uint8_t)(c >> 16), (uint8_t)(c >> 8), (uint8_t)c };
         fwrite(rgb, 1, 3, f);
     }
     fclose(f);
@@ -187,7 +187,7 @@ int main(int argc, char **argv)
     const double t0 = now_s();
     uint64_t instr_est = 0;
     int shot = 0;
-    static uint16_t px[128 * 128];
+    static uint32_t px[128 * 128];
     while (m.cycles < total) {
         const double t = (double)m.cycles / CHG_HCLK;
         if (next_back < nback && t >= backs[next_back]) {

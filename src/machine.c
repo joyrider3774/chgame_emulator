@@ -16,13 +16,7 @@ void chg_init(ChgMachine *m)
     memset(m, 0, sizeof(*m));
     memset(m->flash, 0xff, sizeof(m->flash));
     m->entry = CHG_APP_START;
-    /* what a panel shows before anything is written to it: noise */
-    uint32_t r = 0x12345678u;
-    for (int y = 0; y < ST7735_ROWS; y++)
-        for (int x = 0; x < ST7735_COLS; x++) {
-            r = r * 1664525u + 1013904223u;
-            m->lcd.gram[y][x] = (uint16_t)(r >> 16);
-        }
+    st7735_power_on(&m->lcd);
     chg_reset(m, true);
 }
 
