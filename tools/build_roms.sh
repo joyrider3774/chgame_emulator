@@ -47,6 +47,15 @@ CHGAMES="$CHGAMELIB/examples/Games"
 CHAPPS="$CHGAMELIB/examples/Apps"
 [ -d "$CHGAME" ] || git clone -q https://github.com/bateske/CHGame "$CHGAME"
 git -C "$CHGAME" pull -q 2>/dev/null
+# and every other repository a ROM is built from, so a build is always of
+# what is on GitHub. Fast-forward only: a clone with local commits or edits
+# in the way is left as it is, with a note
+for r in NewBlocksColor CHMultiSprite filmote/CHSpriteView CH32Doom FileBrowser CHGame-Ponglike \
+         bunnymark_ports "$GITHUB"/*_embedded; do
+    case "$r" in /*|?:*) d="$r" ;; *) d="$GITHUB/$r" ;; esac
+    [ -d "$d/.git" ] || continue
+    git -C "$d" pull -q --ff-only 2>/dev/null || echo "not updated: $d (local changes or commits in the way)"
+done
 # a folder that moved must stop the build: without it the sketches would
 # quietly build against whatever copy of CHGfx the sketchbook has
 for d in "$CHGFX" "$CHGAMELIB" "$CHSDLIB" "$CHGAMES" "$CHAPPS"; do

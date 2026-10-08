@@ -116,6 +116,7 @@ or drop a file on the window, or press F3.
 | Reset | F2 |
 | Open | F3 |
 | Back to the bootloader (game menu) | F4 |
+| Turn the screen 90 degrees clockwise; the d-pad turns with it (kept per game) | R — gamepad north button |
 | Pause / fast forward | P / hold Tab |
 | Stats overlay (game fps, speed, MIPS, host load) | F9 |
 | Scaling: fill the window / whole multiples only; remembered (`--integer-scale`, `--no-integer-scale` for one run) | F8 |
