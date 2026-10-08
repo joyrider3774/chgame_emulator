@@ -32,7 +32,7 @@ Modelled on the owner's earlier TinyJoypad emulator
 | `src/st7735.c` | display controller + panel mapping |
 | `src/audio.c` | buzzer pin integrated exactly per audio sample |
 | `src/loader.c` | `.bin`/`.hex`/`.elf`, bootloader install + metadata page, `.sav` files |
-| `src/bootloader_image.c` | the real CHGame bootloader (MIT), generated from the board package `.bin` — do not edit |
+| `src/bootloader_image.c` | the real CHGame bootloader (MIT), generated from the board package `.bin` — do not edit. Since 2026-10-09 board package 0.3.0's `chgame_boot_nomenu.bin` ("USB Only": the 0.2.4 boot decision, no SD menu, same metadata page); before that 0.2.2/0.2.4's `chgame_bootloader.bin`. Regenerate it the same way for a new release |
 | `src/sdspi.c` | the microSD card in SPI mode: command frames, R1/R3/R7, data tokens, CMD18 streaming, CMD24/25 writes. Selected by PB11 low in `spi_deliver()` (bus.c) |
 | `src/sdcard.c` | card storage, image file or folder built into an in-memory FAT32 card and synced back, formatter, `sdcard_make_image` |
 | `src/main.c` | SDL3 front end using SDL main callbacks (works under Emscripten unchanged); F6 GIF recording (save dialog natively, showSaveFilePicker or a download in the browser); R or the gamepad's north button turns the screen by quarter turns as in the ESPboy emulator (the frame is turned after st7735_render, so GIFs and screenshots match; the d-pad is remapped before chg_set_buttons; kept per program by file name: rotations.txt in the pref folder, localStorage `chgame_rotation:<name>` on the web, apart from the ESPboy emulator's `espboy_rotation:`) |
@@ -41,9 +41,10 @@ Modelled on the owner's earlier TinyJoypad emulator
 | `web/sdcard.html`, `web/sdtools.js` | the card manager page (`?card=chgame`) and the zip / FAT-image reader + zip writer. **Identical copies in aka_emulator/web: change both.** The manager edits the IDBFS database (`/chgame/sdcard`, store `FILE_DATA`, key = full path, `{timestamp, mode, contents}`) directly; the overlay ejects the card (`chg_web_sd_eject`, pauses) and reinserts it after `syncfs(true)` |
 | `tools/headless.c` | `chg_headless`: run without a window, report speed, dump screen/RAM/registers |
 | `tools/build_roms.sh` | builds every known CHGame program into `roms/` (gitignored), then runs `make_chg.py` |
+| `build/carts/` | games taken from their GitHub release cart (`.chgame`) instead of built, by `build_roms.sh` (`CARTS`: bateske's EthansCritters, whose compiled-in card hash only matches the release's 44 MB CRITTERS.DAT, and OtherRealm): `rev0.bin` to `roms/bateske/<name>.bin`, the box art beside it as `.png`, the SD files in `build/carts/<name>/sdcard/` |
 | `tools/make_chg.py` | every ROM as a `.CHG` package (CHGame's SD menu format) into `chg/` (gitignored), 8.3 names, `chg/INDEX.TXT` |
-| `tools/build_bootloaders.sh` | builds CHGame's SD menu bootloader (release) in a temp copy, only the binary to `bootloaders/chgame_sdboot.bin` (gitignored) |
-| `tools/make_web.sh` | Emscripten build + the games listed in `web/games.json` (60, kept by hand: new games go on the games site only unless the owner asks, `c:/github/chgames`, `tools/build_site.py`), `serve` to host with Python |
+| `tools/build_bootloaders.sh` | builds the six CHGame bootloaders (`build.sh` variants as its `tools/dist.sh`: the board package's five, `chgame_sdboot`, `_static`, `chgame_sdvisual`, `_static`, `chgame_boot_nomenu`, plus `chgame_sdboot_locked`) in a temp copy, only the binaries to `bootloaders/` (gitignored); they came out byte-identical to 0.3.0's |
+| `tools/make_web.sh` | Emscripten build + the games listed in `web/games.json` (60, frozen: new games go into roms/, chg/ and the games site only, never into the web emulator (owner, 2026-10-09), `c:/github/chgames`, `tools/build_site.py`), `serve` to host with Python |
 | `tests/xw_test.c`, `tests/xw_golden.txt` | XW decoder vs WCH's own assembler output |
 | `tests/sketches/chg_cal/` | **the calibration sketch** the cycle model is fitted to (51 asm loops) |
 | `tests/sketches/chg_bench/` | quick 9-loop timing check shown on the LCD (`chg_bench.bin` prebuilt) |
@@ -59,13 +60,22 @@ Modelled on the owner's earlier TinyJoypad emulator
 - Arduino IDE 2 at `c:/arduino2`; its CLI:
   `c:/arduino2/resources/app/lib/backend/resources/arduino-cli.exe`.
   **Always pass `--config-file ~/.arduinoIDE/arduino-cli.yaml`** — the bare
-  CLI does not know the IDE's sketchbook (`OneDrive/Documenten/Arduino`,
-  which holds the CHGfx library).
-- CHGame board package: `~/AppData/Local/Arduino15/packages/CHGame/` (0.2.4; same bootloader as 0.2.2),
-  FQBN `CHGame:ch32v:CHGame` with menus `opt=osstd|o2std|...`, `periph=game|full`.
+  CLI does not know the IDE's sketchbook (`OneDrive/Documenten/Arduino`;
+  its old CHGfx 1.2.0 copy was removed 2026-10-08: a sketchbook library is
+  taken ahead of the board package's own, and that one clashed with 0.3.0's
+  CHGame library).
+- CHGame board package: `~/AppData/Local/Arduino15/packages/CHGame/` **0.3.0**
+  (installed 2026-10-08, from
+  `https://github.com/bateske/CHGame/releases/latest/download/package_chgame_index.json`),
+  FQBN `CHGame:ch32v:rev0` with menus `opt=oslto(default)|osstd|o2std|...`,
+  `rtlib`, `periph=game|full`, `usb=serial|uploadonly`, `boot=sdmenu|sdstatic|sdvisual|sdvisualstatic|nomenu`.
+  It carries the libraries CHGfx 1.3.1, CHSd and CHGame (whose examples are
+  the casino games and apps) and the five bootloaders in `bootloaders/CHGame/`;
+  same memory map as 0.2.4. Every build also writes `<sketch>.ino.chg`.
   Toolchain `riscv-none-embed-gcc 8.2.0` in `tools/` there (objdump needs
-  `-M xw` to disassemble XW instructions).
-- Uploader: `.../tools/chgame-upload/0.1.0/chgame-upload.exe -port COM6 flash <bin> -run`.
+  `-M xw` to disassemble XW instructions). The core's `tone()` is still an
+  empty function with `periph=game`.
+- Uploader: `.../tools/chgame-upload/<version>/chgame-upload.exe -port COM6 flash <bin> -run`.
 - **A real CHGame is normally attached on COM6** and the owner has allowed
   flashing it for tests. Leave a game on it or tell the owner what's on it.
 - Chrome (not Edge) is installed; Puppeteer (`puppeteer-core`) with emsdk's
@@ -73,20 +83,30 @@ Modelled on the owner's earlier TinyJoypad emulator
 - Game sources: only `c:/github/*_embedded` are the owner's CHGame games
   (don't grep all of `c:/github` — hundreds of unrelated repos). Others cloned
   next to this repo: **bateske's `CHGame`**, the source of truth since
-  2026-10-02 (board package source, the SD menu bootloader; since 2026-10-03
-  the libraries sit in the board package, `platform/board/arduino/CHGame/libraries/`
-  {CHGfx, CHSd, CHGame}, the twenty casino games are the CHGame library's
-  `examples/games/`, CHSDtoUSB its `examples/apps/`; builds pass all three
-  libraries with `--library`; his
-  separate game repositories and CHGfx/CHCasino are frozen), and for what is
+  2026-10-02 (board package source, the SD menu bootloader, `tools/chgpack.py`
+  which `make_chg.py` uses; his separate game repositories and CHGfx/CHCasino
+  are frozen). Since 0.3.0 `build_roms.sh` builds the casino games and apps
+  (CHSDtoUSB, CHSDtoSerial, CHStlView) from the **installed release's** copies
+  (its CHGame library's `examples/Games` and `examples/Apps`, with each
+  sketch's `tools/game.py` FQBN/DEFINES), and passes the release's CHGfx,
+  CHGame and CHSd with `--library`, not the clone's newest commit. For what is
   not in it bateske's `NewBlocksColor CH32Doom CHMultiSprite FileBrowser`
   (CHStlView moved into CHGame's Apps), `CHGame-Ponglike` (poevoid) and
   filmote's `CHSpriteView` in `c:/github/filmote/CHSpriteView` (the original;
   bateske's `c:/github/CHSpriteView` is a modified copy, no longer built; the
-  sketch folder must keep the .ino's name, hence the subfolder). The board package
-  is still the released 0.2.4 from the CH32SerialBoot URL: CHGame has no
-  release yet (the owner waits for one before switching his games' release
-  tools and GitHub actions).
+  sketch folder must keep the .ino's name, hence the subfolder). The owner's
+  games (`*_embedded`, and bunnymark_ports) build for 0.3.0 too since
+  2026-10-08 (release scripts `CHGame:ch32v:rev0:opt=osstd,periph=game`, the
+  workflows' `CORE_CHGAME: 0.3.0` and the new package URL). **No LTO** for
+  them: gcc 8.2 miscompiles them with it (blips: measured on hardware
+  2026-10-01, and the emulator showed the LTO build resetting into the
+  bootloader at the title screen). They keep their own buzzer (TIM1 CH2) and
+  button code: using the CHGame library's `audio::`/`chgame` costs ~9.5 KB of
+  RAM, because Arduino links library objects whole and CHGfx's strong
+  `DMA1_Channel3_IRQHandler` then keeps its 8 KB framebuffer; with
+  `dot_a_linkage=true` in CHGfx's library.properties it costs ~1.1 KB of flash
+  and nothing else (a ready port of PlatformCHGame.cpp was written for when
+  the release has that).
 
 ## Build and verify
 
@@ -250,10 +270,21 @@ the `ALIGN4` macro in `bench.S`), and use `.option norelax`.
   `--build-property compiler.c(pp).extra_flags=...`. Puzzleland only fits that way.
 - FileBrowser needs Arduino's SD library: `build_roms.sh` builds it against a copy
   with the CH32 pin-map fix (`arduino-cli lib install SD` once).
-- Everything builds with board package 0.2.4 and the latest CHGfx: `build_roms.sh`
-  pulls the `c:/github/CHGfx` clone (1.3.0) and passes it to every build, so the
-  sketchbook's older CHGfx copy is not used. CHChess needs that plus LTO
-  (`opt=oslto,rtlib=nano,periph=game,usb=uploadonly`).
+- Everything builds with board package 0.3.0 and its own CHGfx 1.3.1, named
+  with `--library` (a sketchbook copy would otherwise win). The casino games
+  need LTO (`opt=oslto,rtlib=nano,periph=game,usb=uploadonly`, their release
+  options). `build_roms.sh` reuses `build/roms/<group>/<name>`: after a library
+  change delete `build/roms`, or stale objects link (12 casino games failed
+  with `undefined reference to gfx_begin` that way).
+- `.CHG` packages (`make_chg.py`) carry the visual SD menu's picture since
+  0.3.0 (CHGame's spec/chg.md, offset 0x060): bateske's sketches their
+  `chgame.json` `cartImage`, the rest the games site's screenshot cut to 11
+  colours. Beside them `chg/` gets CHGame's default `MENU.BG` (the text
+  menu's logo and button bar; without it the list is on plain black),
+  `COVER.PIC` and `SYSTEM.PIC`, made with its `tools/chcart`: copy all of
+  `chg/` into a card's `GAMES/`. Test: a card folder with `GAMES/*.CHG`, `chg_headless - 13 NUL
+  --bootloader <copy of the package's chgame_sdvisual.bin> --sd card --press
+  down@4:0.15 ...` (UP/DOWN pages through the pictures).
 - Parallel arduino-cli builds occasionally fail silently (shared library
   folder on OneDrive); `build_roms.sh` retries once.
 

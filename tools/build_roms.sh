@@ -1,17 +1,16 @@
 #!/bin/sh
 # Builds the test ROMs in roms/ from their sources in c:/github with the
 # arduino-cli that ships with Arduino IDE 2, using the IDE's own settings
-# (~/.arduinoIDE/arduino-cli.yaml): the board package (0.2.4 or later) and
-# the sketchbook's libraries are the IDE's, except CHGfx, which is always the
-# one in bateske/CHGame (platform/libraries/CHGfx).
+# (~/.arduinoIDE/arduino-cli.yaml): the board package and the sketchbook's
+# libraries are the IDE's.
 #
-# bateske/CHGame (the c:/github/CHGame clone, pulled first) is the source of
-# truth for CHGame development: its board package's libraries/ hold CHGfx
-# (with its examples), CHSd and the CHGame library, whose examples are the
-# twenty casino games (examples/games/<Name>) and the apps CHSDtoUSB and
-# CHStlView (examples/apps).
-# The separate repositories those came from are frozen. The board package
-# installed is still the released 0.2.4 (CHGame has made no release yet).
+# The board package is bateske/CHGame's released one (0.3.0 on, board rev0,
+# https://github.com/bateske/CHGame/releases/latest/download/package_chgame_index.json),
+# which carries the libraries CHGfx (with its examples), CHSd and CHGame,
+# whose examples are the twenty casino games (examples/Games/<Name>) and the
+# apps CHSDtoUSB and CHStlView (examples/Apps). Everything is built against
+# those, and the casino games and apps are the release's copies: what players
+# have, not the newest commit of github.com/bateske/CHGame.
 #
 #   roms/bateske/        Kevin Bates' CHGame games and tools
 #   roms/chgfx/          the CHGfx library's examples
@@ -30,26 +29,33 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 OUT="$HERE/roms"
 WORK="$HERE/build/roms"
 JOBS=${1:-4}
-BOARD=CHGame:ch32v:CHGame
+BOARD=CHGame:ch32v:rev0
 
 winpath() { cygpath -w "$1" 2>/dev/null || echo "$1"; }
 
 mkdir -p "$OUT" "$WORK"
 
-CHGAME="$GITHUB/CHGame"
-# since 2026-10-03 the libraries, and the games and apps as the CHGame
-# library's examples, live inside the board package in CHGame
-CHGLIBS="$CHGAME/platform/board/arduino/CHGame/libraries"
+# the installed board package: its newest version's libraries, which every
+# build finds by itself (platform libraries), and the casino games and apps
+# among their examples
+DATA=$("$CLI" --config-file "$(winpath "$CONFIG")" config get directories.data 2>/dev/null | tr -d '')
+[ -n "$DATA" ] || DATA="$LOCALAPPDATA/Arduino15"
+PKG=$(ls -d "$(cygpath -u "$DATA" 2>/dev/null || echo "$DATA")"/packages/CHGame/hardware/ch32v/*/ 2>/dev/null | sort -V | tail -1)
+CHGLIBS="${PKG%/}/libraries"
 CHGFX="$CHGLIBS/CHGfx"
 CHGAMELIB="$CHGLIBS/CHGame"
 CHSDLIB="$CHGLIBS/CHSd"
 CHGAMES="$CHGAMELIB/examples/Games"
 CHAPPS="$CHGAMELIB/examples/Apps"
+echo "board package: $(basename "${PKG%/}")"
+# the c:/github/CHGame clone only for its tools: make_chg.py packs with its
+# chgpack.py, which also puts the visual menu's picture in each package
+CHGAME="$GITHUB/CHGame"
 [ -d "$CHGAME" ] || git clone -q https://github.com/bateske/CHGame "$CHGAME"
-git -C "$CHGAME" pull -q 2>/dev/null
-# and every other repository a ROM is built from, so a build is always of
-# what is on GitHub. Fast-forward only: a clone with local commits or edits
-# in the way is left as it is, with a note
+git -C "$CHGAME" pull -q --ff-only 2>/dev/null || echo "not updated: $CHGAME"
+# every repository a ROM is built from, so a build is always of what is on
+# GitHub. Fast-forward only: a clone with local commits or edits in the way
+# is left as it is, with a note
 for r in NewBlocksColor CHMultiSprite filmote/CHSpriteView CH32Doom FileBrowser CHGame-Ponglike \
          bunnymark_ports "$GITHUB"/*_embedded; do
     case "$r" in /*|?:*) d="$r" ;; *) d="$GITHUB/$r" ;; esac
@@ -59,7 +65,7 @@ done
 # a folder that moved must stop the build: without it the sketches would
 # quietly build against whatever copy of CHGfx the sketchbook has
 for d in "$CHGFX" "$CHGAMELIB" "$CHSDLIB" "$CHGAMES" "$CHAPPS"; do
-    [ -d "$d" ] || { echo "not found: $d (has bateske/CHGame been reorganised?)"; exit 1; }
+    [ -d "$d" ] || { echo "not found: $d (CHGame board package 0.3.0 or later not installed, or reorganised?)"; exit 1; }
 done
 
 # FileBrowser uses Arduino's SD library, which stops at "#error Architecture
@@ -90,13 +96,27 @@ fi
 
 # group|name|sketch folder|board options|defines
 {
-    # bateske/CHGame's games and apps (CHSDtoUSB, CHStlView), with the release
-    # options its tools/device.py builds all of them with: LTO and the C
-    # library's nano variant to fit, no USB serial. Its FQBN names the board
-    # rev0, which is the 0.3.0 board package's name for it; the installed
-    # 0.2.4 still calls it CHGame (BOARD above)
+    # bateske/CHGame's games and apps (CHSDtoUSB, CHSDtoSerial, CHStlView),
+    # with the release options its tools/device.py builds them with: LTO and
+    # the C library's nano variant to fit, no USB serial; unless the sketch's
+    # own tools/game.py names a board (FQBN, CHSDtoUSB and CHSDtoSerial need USB
+    # serial) or defines (DEFINES, CHSDtoSerial's GFX_CHUNK_ROWS=1)
     for g in "$CHGAMES"/*/ "$CHAPPS"/*/; do
-        echo "bateske|$(basename "$g")|$g|opt=oslto,rtlib=nano,periph=game,usb=uploadonly|"
+        python - "$g" <<'PY'
+import ast, os, re, sys
+g = sys.argv[1]
+opts, defines = "opt=oslto,rtlib=nano,periph=game,usb=uploadonly", ""
+cfg = os.path.join(g, "tools", "game.py")
+if os.path.exists(cfg):
+    text = open(cfg, encoding="utf-8").read()
+    m = re.search(r'^FQBN\s*=\s*"CHGame:ch32v:rev0:([^"]*)"', text, re.M)
+    if m:
+        opts = m.group(1)
+    m = re.search(r'^DEFINES\s*=\s*(\[.*?\])', text, re.M | re.S)
+    if m:
+        defines = " ".join("-D" + d for d in ast.literal_eval(m.group(1)))
+print("bateske|%s|%s|%s|%s" % (os.path.basename(os.path.normpath(g)), g, opts, defines))
+PY
     done
     # not in CHGame: their own repositories
     echo "bateske|NewBlocksColor|$GITHUB/NewBlocksColor|opt=o2std|"
@@ -132,7 +152,7 @@ if os.path.exists(script):
         m = re.match(r'\s*\("CHGame",\s*"([^"]*)",\s*(\{.*?\})\s*\)', line)
         if m:
             targets.append((m.group(1), eval(m.group(2), {"__builtins__": {}})))
-        m = re.search(r'"fqbn":\s*"CHGame:ch32v:CHGame:([^"]*)"', line)
+        m = re.search(r'"fqbn":\s*"CHGame:ch32v:(?:CHGame|rev0):([^"]*)"', line)
         if m:
             opts = m.group(1)
 if not targets:
@@ -155,20 +175,12 @@ EOF
     if [ -n "$SDLIB_OPT" ]; then
         set -- "$@" --library "$(winpath "$SDLIB_OPT")"
     fi
-    # everything builds against CHGame's CHGfx (pulled above), not whichever
-    # copy the sketchbook has, and its CHGame library (CHGame.h: buttons,
-    # frame pacing, START held 3 s back to the SD game menu), which its games
-    # include since 2026-10-02 (its tools/device.py passes both)
-    if [ -d "$CHGFX" ]; then
-        set -- "$@" --library "$(winpath "$CHGFX")"
-    fi
-    if [ -d "$CHGAMELIB" ]; then
-        set -- "$@" --library "$(winpath "$CHGAMELIB")"
-    fi
-    # and CHSd, the third library its tools/device.py passes
-    if [ -d "$CHSDLIB" ]; then
-        set -- "$@" --library "$(winpath "$CHSDLIB")"
-    fi
+    # CHGfx, CHGame and CHSd as the board package has them, named outright: a
+    # copy in the sketchbook (an old CHGfx is there) would otherwise be taken
+    # ahead of the platform's own, and clash with the CHGame library
+    for lib in "$CHGFX" "$CHGAMELIB" "$CHSDLIB"; do
+        set -- "$@" --library "$(winpath "$lib")"
+    done
     if [ -n "$defines" ]; then
         set -- "$@" --build-property "compiler.c.extra_flags=$defines" --build-property "compiler.cpp.extra_flags=$defines"
     fi
@@ -192,6 +204,59 @@ build_one "$first"
 tail -n +2 "$WORK/list.txt" | tr '\n' '\0' |
     xargs -0 -P "$JOBS" -I{} sh -c "$(declare -f winpath build_one); build_one \"\$1\"" _ {}
 
+# Games published as CHGame carts (.chgame, spec/chgame.md in CHGame: a ZIP
+# with the release image rev0.bin, the box art and the game's SD files),
+# taken from their newest GitHub release rather than built: Ethan's Critters
+# compiles the hash of its 44 MB card file in, and that file is only
+# published with the release (its art is sold, not in the repository), so a
+# build of main says WRONG CARD DATA with it. Each gives
+# roms/<group>/<name>.bin, its box art roms/<group>/<name>.png (make_chg.py's
+# picture) and its SD files in build/carts/<name>/sdcard/ (the newest
+# release, prereleases included; downloaded again only when it changes)
+CARTS="bateske|EthansCritters
+bateske|OtherRealm"
+echo "$CARTS" | while IFS='|' read -r group repo; do
+    python - "$group" "$repo" "$OUT" "$HERE/build/carts" <<'PY'
+import io, json, os, shutil, sys, urllib.request, zipfile
+group, repo, out, cache = sys.argv[1:5]
+api = "https://api.github.com/repos/%s/%s/releases" % (group, repo)
+try:
+    releases = json.load(urllib.request.urlopen(api, timeout=60))
+    rel = next(r for r in releases if any(a["name"].endswith(".chgame") for a in r["assets"]))
+    asset = next(a for a in rel["assets"] if a["name"].endswith(".chgame"))
+except Exception as e:
+    print("FAILED  %s/%s  - no release cart (%s)" % (group, repo, e))
+    sys.exit(0)
+d = os.path.join(cache, repo)
+os.makedirs(d, exist_ok=True)
+cart = os.path.join(d, asset["name"])
+if not os.path.exists(cart) or os.path.getsize(cart) != asset["size"]:
+    for f in os.listdir(d):
+        if f.endswith(".chgame"):
+            os.remove(os.path.join(d, f))
+    with urllib.request.urlopen(asset["browser_download_url"], timeout=600) as r, open(cart, "wb") as f:
+        shutil.copyfileobj(r, f)
+z = zipfile.ZipFile(cart)
+names = z.namelist()
+binary = next(n for n in names if n.endswith("/rev0.bin"))
+game = binary.rsplit("/", 1)[0]
+os.makedirs(os.path.join(out, group), exist_ok=True)
+with open(os.path.join(out, group, repo + ".bin"), "wb") as f:
+    f.write(z.read(binary))
+if game + "/cart.png" in names:
+    with open(os.path.join(out, group, repo + ".png"), "wb") as f:
+        f.write(z.read(game + "/cart.png"))
+sd = os.path.join(d, "sdcard")
+shutil.rmtree(sd, ignore_errors=True)
+for n in names:
+    if n.startswith(game + "/sdcard/") and not n.endswith("/"):
+        p = os.path.join(sd, n[len(game) + len("/sdcard/"):])
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "wb") as f:
+            f.write(z.read(n))
+print("ok      %s/%s.bin  (%d bytes, release %s)" % (group, repo, z.getinfo(binary).file_size, rel["tag_name"]))
+PY
+done
 
 # and every ROM as a CHG package for the SD menu bootloader, in chg/
 python "$HERE/tools/make_chg.py"
