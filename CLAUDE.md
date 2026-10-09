@@ -84,7 +84,7 @@ Modelled on the owner's earlier TinyJoypad emulator
   (don't grep all of `c:/github` — hundreds of unrelated repos). Others cloned
   next to this repo: **bateske's `CHGame`**, the source of truth since
   2026-10-02 (board package source, the SD menu bootloader, `tools/chgpack.py`
-  which `make_chg.py` uses; his separate game repositories and CHGfx/CHCasino
+  which `make_chg.py` uses; their separate game repositories and CHGfx/CHCasino
   are frozen). Since 0.3.0 `build_roms.sh` builds the casino games and apps
   (CHSDtoUSB, CHSDtoSerial, CHStlView) from the **installed release's** copies
   (its CHGame library's `examples/Games` and `examples/Apps`, with each
@@ -100,13 +100,16 @@ Modelled on the owner's earlier TinyJoypad emulator
   workflows' `CORE_CHGAME: 0.3.0` and the new package URL). **No LTO** for
   them: gcc 8.2 miscompiles them with it (blips: measured on hardware
   2026-10-01, and the emulator showed the LTO build resetting into the
-  bootloader at the title screen). They keep their own buzzer (TIM1 CH2) and
-  button code: using the CHGame library's `audio::`/`chgame` costs ~9.5 KB of
-  RAM, because Arduino links library objects whole and CHGfx's strong
-  `DMA1_Channel3_IRQHandler` then keeps its 8 KB framebuffer; with
-  `dot_a_linkage=true` in CHGfx's library.properties it costs ~1.1 KB of flash
-  and nothing else (a ready port of PlatformCHGame.cpp was written for when
-  the release has that).
+  bootloader at the title screen). Since 2026-10-09 their PlatformCHGame.cpp
+  (one file, identical in all eight) takes the buttons (`chgame.boot()`,
+  `chgame_readButtons()`, `chgame_exitToMenu()`) and the buzzer (`audio::`) from
+  the CHGame library: every tone a library effect (pitch in 20 Hz steps, 510 ms
+  steps chained; a tone with no length is 4 s, cut off by the next).
+  That needs `dot_a_linkage=true` in the libraries (bateske/CHGame PR #20; added
+  by hand to the installed 0.3.0 and by the games' workflows after installing
+  it): without it CHGfx's strong `DMA1_Channel3_IRQHandler` keeps its 8 KB
+  framebuffer in every sketch that includes CHGame.h (+9.5 KB RAM). Puzzleland
+  only fits with its clouds in fixed point (no soft-float, -1.9 KB).
 
 ## Build and verify
 
@@ -296,6 +299,18 @@ CHSpriteView (streams `/FIRE/*.BIN` at ~280 fps through DMA), FileBrowser
 several blocks, read back; results in `sd_result[]` for `--mem`). Sample
 content: `c:/github/CHStlView/sample`, `c:/github/CHSpriteView/sample/FIRE`.
 Card latency is not modelled (blocks are ready at once); SPI timing is.
+`tests/sketches/chg_sdcheck` runs Ethan's Critters' card steps on the device
+(init, mount, find CRITTERS.DAT, single reads, 200 streams at 24/12/6 MHz)
+plus a hand-made identification logging every raw answer byte, results over
+USB serial (BEGIN/END). Built with `--library` on a copy of the game's
+vendored CHSd. Found 2026-10-09: CHSd's `cmd()` sends a command straight
+after the previous R1, without the 8 idle clocks (N_RC) the SD spec asks for;
+the owner's SanDisk 32 GB ("SK32G") then answers misaligned (`01`, `C1 7F`,
+`3F`) and goes silent until power is cycled, so every CHSd program says no
+card. The SD menu bootloader's `sd.c` sends `x(0xFF)` first and works.
+`xfer(0xFF);` at the start of CHSd's `cmd()` fixes it (Ethan's Critters v1.0
+rebuilt with it works on the device; reported to bateske). The emulated card
+does not need the idle byte, so it cannot show this.
 
 ## Working conventions and traps
 

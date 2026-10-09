@@ -654,8 +654,46 @@ static uint8_t gamepad_buttons(App *app)
     return b;
 }
 
+static const char usage_text[] =
+    "CHGame_Emulator [program] [options]\n"
+    "\n"
+    "program: a .bin, .hex, .elf or .chg (or drop one on the window, or F3)\n"
+    "\n"
+    "  --bootloader file.bin   another bootloader, e.g. one of CHGame's SD menus;\n"
+    "                          without a program it starts with an empty flash\n"
+    "  --no-bootloader         start the program at 0x3000, no bootloader\n"
+    "  --sd folder|card.img    the microSD card (default: the sdcard folder next\n"
+    "                          to the emulator)\n"
+    "  --sd-size MB            the size of a card made from a folder (default:\n"
+    "                          room for its files)\n"
+    "  --no-sd                 an empty card slot\n"
+    "  --piezo, --no-piezo     the piezo's sound, or the bare pin signal (default)\n"
+    "  --integer-scale         whole multiples of the screen only, this run\n"
+    "  --no-integer-scale      fill the window, this run (F8 switches, remembered)\n"
+    "  --scale N               the window's first size: N x 128 (1-10, default 4)\n"
+    "  --help, -h              this text\n"
+    "\n"
+    "F1 in the emulator lists the keys.\n";
+
+/* --help: the options, before any window. A Windows build has no console, so
+   it shows them in a message box; elsewhere they go to the terminal */
+static bool show_usage(int argc, char *argv[])
+{
+    for (int i = 1; i < argc; i++)
+        if (!SDL_strcmp(argv[i], "--help") || !SDL_strcmp(argv[i], "-h")) {
+#ifdef _WIN32
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "CHGame Emulator", usage_text, NULL);
+#else
+            fputs(usage_text, stdout);
+#endif
+            return true;
+        }
+    return false;
+}
+
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
 {
+    if (show_usage(argc, argv)) return SDL_APP_SUCCESS;
     SDL_SetAppMetadata("CHGame Emulator", "0.1", "com.joyrider3774.chgame_emulator");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         SDL_Log("SDL_Init: %s", SDL_GetError());
@@ -668,7 +706,11 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     app->raw_sound = true;          /* the piezo filter is off until F7 or --piezo */
     chg_init(app->m);
 
-    const int scale = 4;
+    /* --scale N: the window's first size, N times the 128x128 screen (1-10, default 4). Read
+       here because the window is made before the rest of the command line is */
+    int scale = 4;
+    for (int i = 1; i + 1 < argc; i++)
+        if (!SDL_strcmp(argv[i], "--scale")) scale = SDL_clamp(SDL_atoi(argv[i + 1]), 1, 10);
     if (!SDL_CreateWindowAndRenderer("CHGame Emulator", 128 * scale, 128 * scale + BAR_H,
                                      SDL_WINDOW_RESIZABLE, &app->window, &app->renderer)) {
         SDL_Log("window: %s", SDL_GetError());
@@ -728,6 +770,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         else if (!SDL_strcmp(argv[i], "--no-sd")) app->sd_path[0] = 0;
         else if (!SDL_strcmp(argv[i], "--integer-scale")) app->integer_scale = true;
         else if (!SDL_strcmp(argv[i], "--no-integer-scale")) app->integer_scale = false;
+        else if (!SDL_strcmp(argv[i], "--scale") && i + 1 < argc) i++;     /* read above, before the window */
         else if (argv[i][0] != '-' && !program) program = argv[i];
     }
     set_scale_mode(app);

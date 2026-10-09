@@ -254,8 +254,52 @@ for n in names:
         os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p, "wb") as f:
             f.write(z.read(n))
+with open(os.path.join(d, "release.txt"), "w") as f:
+    f.write(rel["tag_name"])
 print("ok      %s/%s.bin  (%d bytes, release %s)" % (group, repo, z.getinfo(binary).file_size, rel["tag_name"]))
 PY
+done
+
+# Ethan's Critters carries its own copy of CHSd, which sends each card
+# command straight after the previous response, without the 8 idle clocks
+# (N_RC) the SD spec asks for; a strict card (the owner's SanDisk 32 GB) then
+# never initialises, and the game says INSERT CARD. So its release tag is
+# built here from the c:/github clone with that one line added to its CHSd
+# (the fix in the owner's CHGame branch chsd-idle-clocks-before-command), as
+# its own tools build it, and replaces the release image. The rest of the
+# source is the release's, so the card hash compiled in still matches the
+# release's CRITTERS.DAT. If that build fails, the release image stays
+SDFIX="bateske|EthansCritters|EthansCritters"
+echo "$SDFIX" | while IFS='|' read -r group repo sketch; do
+    tag=$(cat "$HERE/build/carts/$repo/release.txt" 2>/dev/null)
+    src="$GITHUB/$repo"
+    [ -n "$tag" ] && [ -d "$src/.git" ] || { echo "FAILED  $group/$repo  - no release tag or no clone for the CHSd fix"; continue; }
+    w="$WORK/sdfix/$repo"
+    rm -rf "$w"
+    mkdir -p "$w"
+    git -C "$src" fetch -q --tags 2>/dev/null
+    git -C "$src" archive "$tag" | tar -x -C "$w" || { echo "FAILED  $group/$repo  - no tag $tag in $src"; continue; }
+    spi=$(find "$w" -path "*libraries/CHSd/src/SdSpi.cpp" | head -1)
+    libs=${spi%/CHSd/src/SdSpi.cpp}
+    python - "$spi" <<'PY' || { echo "FAILED  $group/$repo  - its CHSd changed, the fix does not apply"; continue; }
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8", newline="").read()
+old = "static uint8_t cmd(uint8_t c, uint32_t arg) {\n    xfer((uint8_t)(0x40 | c));\n"
+if old not in s:
+    sys.exit(1)
+s = s.replace(old, "static uint8_t cmd(uint8_t c, uint32_t arg) {\n    xfer(0xFF);\n    xfer((uint8_t)(0x40 | c));\n")
+open(p, "w", encoding="utf-8", newline="").write(s)
+PY
+    bp="$WORK/sdfix/$repo-build"
+    if "$CLI" --config-file "$(winpath "$CONFIG")" compile --fqbn "$BOARD:opt=oslto,rtlib=nano,periph=game,usb=uploadonly" \
+            --build-path "$(winpath "$bp")" --library "$(winpath "$libs/CHGfx")" --library "$(winpath "$libs/CHGame")" \
+            --library "$(winpath "$libs/CHSd")" "$(winpath "$w/$sketch")" > "$bp.log" 2>&1; then
+        cp "$bp/$sketch.ino.bin" "$OUT/$group/$repo.bin"
+        echo "ok      $group/$repo.bin  ($(wc -c < "$OUT/$group/$repo.bin") bytes, release $tag with the CHSd fix)"
+    else
+        echo "FAILED  $group/$repo  (CHSd fix build; the release image stays) - $(grep -iE "error" "$bp.log" | head -1 | cut -c1-150)"
+    fi
 done
 
 # and every ROM as a CHG package for the SD menu bootloader, in chg/

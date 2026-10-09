@@ -107,6 +107,28 @@ Saves go to the browser's IndexedDB.
 
 or drop a file on the window, or press F3.
 
+### Command line
+
+```
+CHGame_Emulator [program] [options]
+```
+
+The program is a `.bin`, `.hex`, `.elf` or `.chg` (a CHG package for the SD menu).
+
+| Option | What it does |
+|---|---|
+| `--bootloader file.bin` | another bootloader instead of the built-in one, e.g. one of CHGame's SD menus (`tools/build_bootloaders.sh` builds them into `bootloaders/`); without a program the flash starts erased |
+| `--no-bootloader` | start the program at 0x3000, no bootloader |
+| `--sd folder\|card.img` | the microSD card: a folder (made into a FAT32 card) or a card image (default: the `sdcard` folder next to the emulator) |
+| `--sd-size MB` | the size of a card made from a folder (default: room for its files) |
+| `--no-sd` | an empty card slot |
+| `--piezo` | the piezo's sound (F7 switches) |
+| `--no-piezo` | the bare pin signal (the default) |
+| `--integer-scale` | whole multiples of the screen only, for this run |
+| `--no-integer-scale` | fill the window, for this run (F8 switches between the two and remembers the choice) |
+| `--scale N` | the window's first size, N times the 128x128 screen (1-10, default 4) |
+| `--help`, `-h` | list the options and exit (in a message box on Windows) |
+
 | | |
 |---|---|
 | D-pad | Arrow keys or WASD, gamepad d-pad or left stick |
