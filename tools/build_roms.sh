@@ -18,6 +18,8 @@
 #   roms/filmote/        filmote's CHSpriteView
 #   roms/joyrider3774/   the *_embedded games, every CHGame target their
 #                        tools/build_releases.py lists, with its defines
+#   roms/sdcard/         the card files those games read (<NAME>.DAT, for
+#                        the root of the microSD card)
 #
 # Each project is built with the board settings its README asks for.
 # Usage: tools/build_roms.sh [jobs]      (default 4 builds at once)
@@ -93,6 +95,27 @@ PY
 else
     echo "Arduino SD library not installed: FileBrowser will not build (arduino-cli lib install SD)"
 fi
+
+# The *_embedded games read their art (and the level packs) off the microSD
+# card: one binary each, and a card file <NAME>.DAT that goes in the card's
+# root. Their tools/mkcard.py writes it into the game's releases/ and the
+# cardindex.h its build checks the card against (the same as committed when
+# the art is), so it runs before the build. The card files are collected in
+# roms/sdcard/, the root of a card for all of them (the web build's and the
+# games site's sample card take them from there)
+rm -rf "$OUT/sdcard"
+mkdir -p "$OUT/sdcard"
+for g in "$GITHUB"/*_embedded; do
+    [ -f "$g/tools/mkcard.py" ] || continue
+    n=$(basename "$g")
+    if python "$g/tools/mkcard.py" > "$WORK/$n-mkcard.log" 2>&1; then
+        dat="$g/releases/$(sed -n 's/^#define CARD_FILE_NAME "\(.*\)"/\1/p' "$g/source/$n/cardindex.h")"
+        cp "$dat" "$OUT/sdcard/" && echo "ok      sdcard/$(basename "$dat")  ($(wc -c < "$dat") bytes)"
+        rm -f "$WORK/$n-mkcard.log"
+    else
+        echo "FAILED  $n card file - $(tail -1 "$WORK/$n-mkcard.log")"
+    fi
+done
 
 # group|name|sketch folder|board options|defines
 {
@@ -191,6 +214,8 @@ EOF
         cp "$bin" "$OUT/$group/$name.bin"
         size=$(grep -o "Sketch uses [0-9]* bytes" "$log" | grep -o "[0-9]*")
         echo "ok      $group/$name.bin  ($size bytes)"
+        # a log is kept only for a build that failed
+        rm -f "$log"
     else
         echo "FAILED  $group/$name  - $(grep -iE "error|overflow" "$log" | head -1 | cut -c1-150)"
     fi
@@ -203,6 +228,24 @@ first=$(head -1 "$WORK/list.txt")
 build_one "$first"
 tail -n +2 "$WORK/list.txt" | tr '\n' '\0' |
     xargs -0 -P "$JOBS" -I{} sh -c "$(declare -f winpath build_one); build_one \"\$1\"" _ {}
+
+# ROMs of targets that are gone (the *_embedded games had a binary per level
+# pack before their levels moved to the card): only what the list builds stays
+# in the groups it builds, and their build folders and logs in build/roms go
+# with them; the carts below add theirs afterwards
+for gdir in "$OUT"/joyrider3774 "$OUT"/chgfx; do
+    group=$(basename "$gdir")
+    for f in "$gdir"/*.bin; do
+        [ -f "$f" ] || continue
+        grep -q "^$group|$(basename "$f" .bin)|" "$WORK/list.txt" ||
+            { rm -f "$f"; echo "removed $group/$(basename "$f")"; }
+    done
+    for d in "$WORK/$group"/*/; do
+        [ -d "$d" ] || continue
+        name=$(basename "$d")
+        grep -q "^$group|$name|" "$WORK/list.txt" || rm -rf "$d" "$WORK/$group/$name.log"
+    done
+done
 
 # Games published as CHGame carts (.chgame, spec/chgame.md in CHGame: a ZIP
 # with the release image rev0.bin, the box art and the game's SD files),
@@ -297,6 +340,7 @@ PY
             --library "$(winpath "$libs/CHSd")" "$(winpath "$w/$sketch")" > "$bp.log" 2>&1; then
         cp "$bp/$sketch.ino.bin" "$OUT/$group/$repo.bin"
         echo "ok      $group/$repo.bin  ($(wc -c < "$OUT/$group/$repo.bin") bytes, release $tag with the CHSd fix)"
+        rm -f "$bp.log"
     else
         echo "FAILED  $group/$repo  (CHSd fix build; the release image stays) - $(grep -iE "error" "$bp.log" | head -1 | cut -c1-150)"
     fi

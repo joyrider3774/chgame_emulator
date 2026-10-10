@@ -136,36 +136,12 @@
   "name": "chgfx / PartialUpdate"
  },
  {
-  "file": "roms/joyrider3774/blips_1.bin",
-  "name": "joyrider3774 / blips_1"
+  "file": "roms/joyrider3774/blips.bin",
+  "name": "joyrider3774 / blips"
  },
  {
-  "file": "roms/joyrider3774/blips_2.bin",
-  "name": "joyrider3774 / blips_2"
- },
- {
-  "file": "roms/joyrider3774/blips_3.bin",
-  "name": "joyrider3774 / blips_3"
- },
- {
-  "file": "roms/joyrider3774/blips_4.bin",
-  "name": "joyrider3774 / blips_4"
- },
- {
-  "file": "roms/joyrider3774/blips_5.bin",
-  "name": "joyrider3774 / blips_5"
- },
- {
-  "file": "roms/joyrider3774/blips_6.bin",
-  "name": "joyrider3774 / blips_6"
- },
- {
-  "file": "roms/joyrider3774/blockdude_1.bin",
-  "name": "joyrider3774 / blockdude_1"
- },
- {
-  "file": "roms/joyrider3774/blockdude_2.bin",
-  "name": "joyrider3774 / blockdude_2"
+  "file": "roms/joyrider3774/blockdude.bin",
+  "name": "joyrider3774 / blockdude"
  },
  {
   "file": "roms/joyrider3774/BunnyMark.bin",
@@ -180,52 +156,16 @@
   "name": "joyrider3774 / formula1"
  },
  {
-  "file": "roms/joyrider3774/puzzleland_1.bin",
-  "name": "joyrider3774 / puzzleland_1"
- },
- {
-  "file": "roms/joyrider3774/puzzleland_2.bin",
-  "name": "joyrider3774 / puzzleland_2"
- },
- {
-  "file": "roms/joyrider3774/puzzleland_3.bin",
-  "name": "joyrider3774 / puzzleland_3"
+  "file": "roms/joyrider3774/puzzleland.bin",
+  "name": "joyrider3774 / puzzleland"
  },
  {
   "file": "roms/joyrider3774/rubido.bin",
   "name": "joyrider3774 / rubido"
  },
  {
-  "file": "roms/joyrider3774/sokoban_1.bin",
-  "name": "joyrider3774 / sokoban_1"
- },
- {
-  "file": "roms/joyrider3774/sokoban_2.bin",
-  "name": "joyrider3774 / sokoban_2"
- },
- {
-  "file": "roms/joyrider3774/sokoban_3.bin",
-  "name": "joyrider3774 / sokoban_3"
- },
- {
-  "file": "roms/joyrider3774/sokoban_4.bin",
-  "name": "joyrider3774 / sokoban_4"
- },
- {
-  "file": "roms/joyrider3774/sokoban_5.bin",
-  "name": "joyrider3774 / sokoban_5"
- },
- {
-  "file": "roms/joyrider3774/sokoban_6.bin",
-  "name": "joyrider3774 / sokoban_6"
- },
- {
-  "file": "roms/joyrider3774/sokoban_7.bin",
-  "name": "joyrider3774 / sokoban_7"
- },
- {
-  "file": "roms/joyrider3774/sokoban_8.bin",
-  "name": "joyrider3774 / sokoban_8"
+  "file": "roms/joyrider3774/sokoban.bin",
+  "name": "joyrider3774 / sokoban"
  },
  {
   "file": "roms/joyrider3774/waternet.bin",

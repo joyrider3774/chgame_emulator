@@ -268,9 +268,17 @@ the `ALIGN4` macro in `bench.S`), and use `.option norelax`.
 - Flash alias at 0x08000000 (flash programming writes there). Erased = 0xFF.
 - GPIOB CFGHR is write-only on the chip; the core keeps a RAM shadow
   (`CFGHR_tmpB`). Emulated reads return the written value.
-- The owner's games' `tools/build_releases.py` list CHGame targets with defines
-  (level packs); `build_roms.sh` parses them and passes the defines through
-  `--build-property compiler.c(pp).extra_flags=...`. Puzzleland only fits that way.
+- The owner's games' `tools/build_releases.py` list CHGame targets with defines;
+  `build_roms.sh` parses them and passes the defines through
+  `--build-property compiler.c(pp).extra_flags=...`. Since 2026-10-10 each has
+  one CHGame target (no more binary per level pack): art and levels are read
+  off the microSD card from `<NAME>.DAT` (card root, 8.3, named in the game's
+  `cardindex.h`), written by the game's `tools/mkcard.py`, which `build_roms.sh`
+  runs first and collects into `roms/sdcard/`. From there: `make_web.sh`'s
+  `build_web/sdcard.zip`, the games site's `sdcard.zip` and screenshot card
+  (`SHOT_SD`), and a record in each package (`make_chg.py`, spec/chg.md
+  `sdcard`). Without the card file these games cannot draw: test them with
+  `--sd roms/sdcard` (a copy, the emulator syncs the folder back).
 - FileBrowser needs Arduino's SD library: `build_roms.sh` builds it against a copy
   with the CH32 pin-map fix (`arduino-cli lib install SD` once).
 - Everything builds with board package 0.3.0 and its own CHGfx 1.3.1, named

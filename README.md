@@ -213,7 +213,9 @@ can be made, and files and folders deleted. **Done** puts the card back in.
 card from a zip file or a FAT12/16/32 card image before the first program
 starts. It does so once: as long as that file stays the same, later visits
 keep what the programs wrote to the card. Emptying the card makes the next
-visit fill it again. Without `?sd=`, a `sdcard.zip` (or else a `sdcard.img`)
+visit fill it again. Files put on a card that was never filled (with the
+card manager on its own, before any program ran) stay: the image's files are
+added beside them. Without `?sd=`, a `sdcard.zip` (or else a `sdcard.img`)
 beside the page is used the same way. The page only asks the server for the
 file's size and date on each visit, and downloads it only when they changed.
 

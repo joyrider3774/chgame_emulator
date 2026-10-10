@@ -30,6 +30,12 @@ card tool (tools/chcart): MENU.BG (the text menu's CHGAME logo and button
 bar), COVER.PIC and SYSTEM.PIC (the graphic menu's cover and screens). So
 copying everything in chg/ into a card's GAMES folder gives the menus as a
 card prepared by CHGame's tools shows them.
+
+The *_embedded games read their art and levels from a card file of their own
+(<NAME>.DAT, in the card's root), which build_roms.sh collects in
+roms/sdcard/. A package cannot carry it; their packages get a record
+(spec/chg.md) naming it with its size and CRC, as CHGame's card tool writes
+one, and INDEX.TXT says which file each needs.
 """
 import glob
 import json
@@ -43,6 +49,7 @@ import zlib
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROMS = os.path.join(HERE, "roms")
 OUT = os.path.join(HERE, "chg")
+SDCARD = os.path.join(ROMS, "sdcard")
 GITHUB = os.environ.get("GITHUB_DIR", "c:/github")
 SHOTS = os.path.join(GITHUB, "chgames", "screenshots")
 
@@ -168,7 +175,36 @@ def site_shot(group, name, tmp):
     return out
 
 
-def package(image, title, author, picture_png):
+def card_files(group, name):
+    """{path on the card: bytes} of the files a ROM reads off the microSD card:
+    an *_embedded game's card file (its cardindex.h names it), which
+    build_roms.sh collected in roms/sdcard/. {} for the rest"""
+    if group != "joyrider3774":
+        return {}
+    header = os.path.join(GITHUB, name + "_embedded", "source", name + "_embedded", "cardindex.h")
+    if not os.path.isfile(header):
+        return {}
+    m = re.search(r'#define CARD_FILE_NAME "([^"]+)"', open(header, encoding="utf-8").read())
+    path = m and os.path.join(SDCARD, m.group(1))
+    if not path or not os.path.isfile(path):
+        print("no card file for %s/%s in %s" % (group, name, SDCARD))
+        return {}
+    return {m.group(1): open(path, "rb").read()}
+
+
+def record(image, name, title, author, sd):
+    """the package's record (CHGame's spec/chg.md, as its chcart.runtime.record()
+    writes it): the game and the SD files it needs, with their sizes and CRCs,
+    so that CHGame's card tools know them. Only for a game with SD files"""
+    r = {"chgRecord": 1, "game": {"id": re.sub(r"[^a-z0-9-]", "-", name.lower())[:32], "title": title,
+                                  "author": author},
+         "binaryBytes": len(image),
+         "sdcard": [{"path": p, "bytes": len(sd[p]), "crc32": "%08x" % (zlib.crc32(sd[p]) & 0xFFFFFFFF)}
+                    for p in sorted(sd)]}
+    return json.dumps(r, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+
+
+def package(image, title, author, picture_png, rec=None):
     """the package, with CHGame's packer and the picture when it can be had"""
     if chgpack is None:
         return pack(image, title, author)
@@ -178,7 +214,7 @@ def package(image, title, author, picture_png):
             picture = chgpack.picture_file(picture_png)
         except Exception as e:      # a PNG breaking the picture rule: no picture, as chcart does
             print("no picture for %s: %s" % (title, e))
-    return chgpack.pack(chgpack.pad_image(image), title, author[:15], picture=picture)
+    return chgpack.pack(chgpack.pad_image(image), title, author[:15], picture=picture, record=rec)
 
 
 def main():
@@ -196,8 +232,11 @@ def main():
             beside = os.path.join(ROMS, group, name + ".png")
             picture = picture or (beside if os.path.isfile(beside) else None)
             picture = picture or site_shot(group, name, tmp)
+            image = open(os.path.join(ROMS, group, f), "rb").read()
+            sd = card_files(group, name)
             try:
-                data = package(open(os.path.join(ROMS, group, f), "rb").read(), title_of(name), group, picture)
+                data = package(image, title_of(name), group, picture,
+                               record(image, name, title_of(name), group, sd) if sd else None)
             except ValueError as e:
                 print("skipped %s/%s: %s" % (group, f, e))
                 failed += 1
@@ -212,7 +251,8 @@ def main():
                 written.append(short)
             rom_time = os.path.getmtime(os.path.join(ROMS, group, f))
             os.utime(path, (rom_time, rom_time))
-            index.append("%-12s %-20s roms/%s/%s" % (short, title_of(name), group, f))
+            index.append("%-12s %-20s roms/%s/%s%s" % (short, title_of(name), group, f,
+                         "".join("  + %s in the card's root" % p for p in sorted(sd))))
     # the menu's own files, beside the packages
     for fname, data in menu_files().items():
         path = os.path.join(OUT, fname)
@@ -225,7 +265,8 @@ def main():
         if f.upper().endswith(".CHG") and f not in taken_files(index):
             os.remove(os.path.join(OUT, f))
             print("removed %s" % f)
-    text_index = ("CHG packages made by tools/make_chg.py from roms/: file, menu title, ROM\n\n"
+    text_index = ("CHG packages made by tools/make_chg.py from roms/: file, menu title, ROM\n"
+                  "A game's card file (+ NAME.DAT) is in roms/sdcard/: it goes in the card's root, not in GAMES\n\n"
                   + "\n".join(index) + "\n")
     index_path = os.path.join(OUT, "INDEX.TXT")
     if not os.path.exists(index_path) or open(index_path, encoding="utf-8").read() != text_index:

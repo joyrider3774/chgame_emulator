@@ -195,13 +195,19 @@
       done();
     });
 
+    // A card that was never filled but has files was made by the visitor in
+    // the card manager (a page can open it before any program has run): the
+    // image's files are added beside theirs instead of replacing the card,
+    // and none of theirs is overwritten.
     function fill(src, buf, stamp) {
       return SDTools.unpack(buf).then(function (entries) {
-        emptyDir(SD);
+        var merge = !old && FS.readdir(SD).length > 2;
+        if (!merge) emptyDir(SD);
         var files = 0;
         entries.forEach(function (e) {
           var p = SD + '/' + e.path;
           if (e.dir) { mkdirs(p); return; }
+          if (merge && FS.analyzePath(p).exists) return;
           mkdirs(p.substring(0, p.lastIndexOf('/')));
           FS.writeFile(p, e.data);
           files++;

@@ -81,6 +81,30 @@ print("%d games in build_web/games.json%s" % (len(games) - len(missing),
       " (%d not in roms/: run tools/build_roms.sh)" % len(missing) if missing else ""))
 PY
 
+# The card the page fills its microSD card from on a first visit (shell.html,
+# cardFromParam): the card files of the *_embedded games, which read their
+# art and levels off the card, from roms/sdcard/ (build_roms.sh). Rewritten
+# only when they change, so a visitor's card is not refilled for nothing
+"$PY" - <<'PY'
+import io, os, zipfile
+src, out = "roms/sdcard", "build_web/sdcard.zip"
+files = sorted(f for f in os.listdir(src) if os.path.isfile(os.path.join(src, f))) if os.path.isdir(src) else []
+if not files:
+    if os.path.exists(out):
+        os.remove(out)
+    print("no sdcard.zip (no card files in roms/sdcard: run tools/build_roms.sh)")
+else:
+    b = io.BytesIO()
+    with zipfile.ZipFile(b, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        for f in files:
+            z.writestr(zipfile.ZipInfo(f, (2026, 1, 1, 0, 0, 0)), open(os.path.join(src, f), "rb").read(),
+                       zipfile.ZIP_DEFLATED, 9)
+    data = b.getvalue()
+    if not os.path.exists(out) or open(out, "rb").read() != data:
+        open(out, "wb").write(data)
+    print("sdcard.zip: %s (%d KB)" % (" ".join(files), len(data) // 1024))
+PY
+
 if [ "$1" = "serve" ]; then
     # serving the repository root makes roms/ reachable as ../roms/... for testing:
     # http://127.0.0.1:8000/build_web/CHGame_Emulator.html?rom=../roms/bateske/CHChess.bin
