@@ -94,7 +94,7 @@ typedef struct {
 #define CHG_IRQ_TIM1_UP     35
 #define CHG_IRQ_TIM1_CC     37
 #define CHG_IRQ_TIM2_UP     38
-#define CHG_IRQ_TIM3        60
+#define CHG_IRQ_TIM3        54      /* TIM3_IRQn in the SDK's ch32x035.h; was 60 */
 
 typedef struct {
     uint64_t enabled;
