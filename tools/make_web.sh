@@ -37,6 +37,8 @@ cmake --build build_web || exit 1
 # (web/sdcard.html, web/sdtools.js: the same files as in aka_emulator) go
 # beside it, stamped the same way.
 cp web/sdcard.html web/sdtools.js build_web/
+# the .wasm's MIME type for Apache / LiteSpeed servers (web/.htaccess)
+cp web/.htaccess build_web/
 "$PY" - "build_web/CHGame_Emulator.html" "build_web/CHGame_Emulator.wasm" "build_web/sdtools.js" <<'PY'
 import hashlib, re, sys
 html, wasm, tools = sys.argv[1], sys.argv[2], sys.argv[3]

@@ -58,7 +58,8 @@ git -C "$CHGAME" pull -q --ff-only 2>/dev/null || echo "not updated: $CHGAME"
 # every repository a ROM is built from, so a build is always of what is on
 # GitHub. Fast-forward only: a clone with local commits or edits in the way
 # is left as it is, with a note
-for r in NewBlocksColor CHMultiSprite filmote/CHSpriteView CH32Doom FileBrowser CHGame-Ponglike \
+for r in NewBlocksColor CHMultiSprite filmote/CHSpriteView CH32Doom FileBrowser CHGame-Ponglike CHeleste \
+         veluv01/EmberHollow SellswordSoftware/vroom jadflat/CHBas jadflat/CHCeleste2 jadflat/CHSpaceCab \
          bunnymark_ports "$GITHUB"/*_embedded; do
     case "$r" in /*|?:*) d="$r" ;; *) d="$GITHUB/$r" ;; esac
     [ -d "$d/.git" ] || continue
@@ -124,10 +125,16 @@ done
     # the C library's nano variant to fit, no USB serial; unless the sketch's
     # own tools/game.py names a board (FQBN, CHSDtoUSB and CHSDtoSerial need USB
     # serial) or defines (DEFINES, CHSDtoSerial's GFX_CHUNK_ROWS=1)
-    for g in "$CHGAMES"/*/ "$CHAPPS"/*/; do
-        python - "$g" <<'PY'
+    # Games by others laid out the same way (a CHGame game folder with its
+    # tools/game.py and chgame.json) come through here too, under their
+    # author's group: "group:folder"
+    for g in "$CHGAMES"/*/ "$CHAPPS"/*/ "veluv01:$GITHUB/veluv01/EmberHollow/games/EmberHollow" \
+             "SellswordSoftware:$GITHUB/SellswordSoftware/vroom"; do
+        case "$g" in *:/*) group=${g%%:/*}; g=/${g#*:/} ;; *) group=bateske ;; esac
+        [ -d "$g" ] || continue
+        python - "$g" "$group" <<'PY'
 import ast, os, re, sys
-g = sys.argv[1]
+g, group = sys.argv[1], sys.argv[2]
 opts, defines = "opt=oslto,rtlib=nano,periph=game,usb=uploadonly", ""
 cfg = os.path.join(g, "tools", "game.py")
 if os.path.exists(cfg):
@@ -138,7 +145,7 @@ if os.path.exists(cfg):
     m = re.search(r'^DEFINES\s*=\s*(\[.*?\])', text, re.M | re.S)
     if m:
         defines = " ".join("-D" + d for d in ast.literal_eval(m.group(1)))
-print("bateske|%s|%s|%s|%s" % (os.path.basename(os.path.normpath(g)), g, opts, defines))
+print("%s|%s|%s|%s|%s" % (group, os.path.basename(os.path.normpath(g)), g, opts, defines))
 PY
     done
     # not in CHGame: their own repositories
@@ -228,6 +235,21 @@ first=$(head -1 "$WORK/list.txt")
 build_one "$first"
 tail -n +2 "$WORK/list.txt" | tr '\n' '\0' |
     xargs -0 -P "$JOBS" -I{} sh -c "$(declare -f winpath build_one); build_one \"\$1\"" _ {}
+
+# The cart picture (chgame.json cartImage) of a game outside the board
+# package goes beside its ROM, where make_chg.py takes it for the package
+# (bateske's games in the package are found there by make_chg.py itself)
+python - "$WORK/list.txt" "$OUT" <<'PY'
+import json, os, shutil, sys
+for line in open(sys.argv[1], encoding="utf-8"):
+    group, name, sketch = line.rstrip("\n").split("|")[:3]
+    j = os.path.join(sketch, "chgame.json")
+    if group == "bateske" or not os.path.isfile(j) or not os.path.isfile(os.path.join(sys.argv[2], group, name + ".bin")):
+        continue
+    art = json.load(open(j, encoding="utf-8")).get("cartImage")
+    if art and os.path.isfile(os.path.join(sketch, art)):
+        shutil.copy2(os.path.join(sketch, art), os.path.join(sys.argv[2], group, name + ".png"))
+PY
 
 # ROMs of targets that are gone (the *_embedded games had a binary per level
 # pack before their levels moved to the card): only what the list builds stays
@@ -343,6 +365,58 @@ PY
         rm -f "$bp.log"
     else
         echo "FAILED  $group/$repo  (CHSd fix build; the release image stays) - $(grep -iE "error" "$bp.log" | head -1 | cut -c1-150)"
+    fi
+done
+
+# Games that carry their own copy of CHGame's libraries and tools (chgame/,
+# vendored from a CHGame commit newer than the board package release, see
+# its chgame/VENDORED.md): built as their own tools build them (chgame/tools/
+# device.py), against those libraries, with the sketch's tools/game.py FQBN
+# (or the release options) and DEFINES. Their cart picture (chgame.json
+# cartImage) goes beside the ROM for make_chg.py.
+# group|repository (in c:/github)|sketch folder in it; the ROM is named after
+# the repository
+VENDORED="bateske|CHeleste|Cheleste
+jadflat|jadflat/CHBas|Bas
+jadflat|jadflat/CHCeleste2|Celeste2
+jadflat|jadflat/CHSpaceCab|SpaceCab"
+echo "$VENDORED" | while IFS='|' read -r group repo sketch; do
+    src="$GITHUB/$repo"
+    repo=$(basename "$repo")
+    libs="$src/chgame/platform/board/arduino/CHGame/libraries"
+    [ -d "$src/$sketch" ] && [ -d "$libs" ] || { echo "FAILED  $group/$repo  - no clone or no vendored libraries in $src"; continue; }
+    cfg=$(python - "$src/$sketch" <<'PY'
+import ast, os, re, sys
+cfg = os.path.join(sys.argv[1], "tools", "game.py")
+text = open(cfg, encoding="utf-8").read() if os.path.exists(cfg) else ""
+m = re.search(r'^FQBN\s*=\s*"CHGame:ch32v:rev0:([^"]*)"', text, re.M)
+opts = m.group(1) if m else "opt=oslto,rtlib=nano,periph=game,usb=uploadonly"
+m = re.search(r'^DEFINES\s*=\s*(\[.*?\])', text, re.M | re.S)
+print(opts + "|" + (" ".join("-D" + d for d in ast.literal_eval(m.group(1))) if m else ""))
+PY
+)
+    opts=${cfg%%|*}
+    defines=${cfg#*|}
+    bp="$WORK/$group/$repo"
+    mkdir -p "$bp" "$OUT/$group"
+    set -- --config-file "$(winpath "$CONFIG")" compile --fqbn "$BOARD:$opts" --build-path "$(winpath "$bp")" \
+        --library "$(winpath "$libs/CHGfx")" --library "$(winpath "$libs/CHGame")" --library "$(winpath "$libs/CHSd")"
+    if [ -n "$defines" ]; then
+        set -- "$@" --build-property "compiler.c.extra_flags=$defines" --build-property "compiler.cpp.extra_flags=$defines"
+    fi
+    if "$CLI" "$@" "$(winpath "$src/$sketch")" > "$bp.log" 2>&1; then
+        cp "$bp/$sketch.ino.bin" "$OUT/$group/$repo.bin"
+        python - "$src/$sketch" "$OUT/$group/$repo.png" <<'PY'
+import json, os, shutil, sys
+j = os.path.join(sys.argv[1], "chgame.json")
+art = json.load(open(j, encoding="utf-8")).get("cartImage") if os.path.exists(j) else None
+if art and os.path.isfile(os.path.join(sys.argv[1], art)):
+    shutil.copy2(os.path.join(sys.argv[1], art), sys.argv[2])
+PY
+        echo "ok      $group/$repo.bin  ($(grep -o "Sketch uses [0-9]* bytes" "$bp.log" | grep -o "[0-9]*") bytes, its vendored CHGame libraries)"
+        rm -f "$bp.log"
+    else
+        echo "FAILED  $group/$repo  - $(grep -iE "error|overflow" "$bp.log" | head -1 | cut -c1-150)"
     fi
 done
 

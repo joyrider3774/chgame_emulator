@@ -1,0 +1,6 @@
+# The server sent CHGame_Emulator.wasm as text/plain. Browsers then refuse
+# to compile it while it downloads (WebAssembly.instantiateStreaming wants
+# application/wasm) and fall back to downloading it whole first, with an
+# error in the console. tools/make_web.sh copies this file into build_web/,
+# and the games site's tools/build_site.py beside its copy of the emulator.
+AddType application/wasm .wasm
