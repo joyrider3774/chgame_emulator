@@ -21,6 +21,12 @@
 #   roms/sdcard/         the card files those games read (<NAME>.DAT, for
 #                        the root of the microSD card)
 #
+# It builds only the board package's examples (the casino games, the apps and
+# the CHGfx examples) and the games of the web emulator (web/games.json).
+# Other games are built once by hand into roms/<author>/ and stay there: this
+# script never deletes ROMs outside joyrider3774/ and chgfx/, and make_chg.py
+# and the games site take everything in roms/.
+#
 # Each project is built with the board settings its README asks for.
 # Usage: tools/build_roms.sh [jobs]      (default 4 builds at once)
 
@@ -56,13 +62,26 @@ CHGAME="$GITHUB/CHGame"
 [ -d "$CHGAME" ] || git clone -q https://github.com/bateske/CHGame "$CHGAME"
 git -C "$CHGAME" pull -q --ff-only 2>/dev/null || echo "not updated: $CHGAME"
 # every repository a ROM is built from, so a build is always of what is on
-# GitHub. Fast-forward only: a clone with local commits or edits in the way
-# is left as it is, with a note
-for r in NewBlocksColor CHMultiSprite filmote/CHSpriteView CH32Doom FileBrowser CHGame-Ponglike CHeleste \
-         veluv01/EmberHollow SellswordSoftware/vroom jadflat/CHBas jadflat/CHCeleste2 jadflat/CHSpaceCab \
-         bunnymark_ports "$GITHUB"/*_embedded; do
-    case "$r" in /*|?:*) d="$r" ;; *) d="$GITHUB/$r" ;; esac
-    [ -d "$d/.git" ] || continue
+# GitHub: cloned when it is missing, pulled when it is there. Fast-forward
+# only: a clone with local commits or edits in the way is left as it is, with
+# a note. "GitHub owner/repository:folder in c:/github" (filmote's
+# CHSpriteView in filmote/: an Arduino sketch folder must keep the .ino's name,
+# and bateske's modified copy has it too)
+for r in bateske/NewBlocksColor:NewBlocksColor bateske/CHMultiSprite:CHMultiSprite \
+         filmote/CHSpriteView:filmote/CHSpriteView bateske/CH32Doom:CH32Doom \
+         bateske/FileBrowser:FileBrowser poevoid/CHGame-Ponglike:CHGame-Ponglike \
+         joyrider3774/bunnymark_ports:bunnymark_ports \
+         joyrider3774/blips_embedded:blips_embedded joyrider3774/blockdude_embedded:blockdude_embedded \
+         joyrider3774/formula1_embedded:formula1_embedded joyrider3774/mazethingie_embedded:mazethingie_embedded \
+         joyrider3774/puzzleland_embedded:puzzleland_embedded joyrider3774/rubido_embedded:rubido_embedded \
+         joyrider3774/sokoban_embedded:sokoban_embedded joyrider3774/waternet_embedded:waternet_embedded \
+         joyrider3774/znax_embedded:znax_embedded; do
+    d="$GITHUB/${r#*:}"
+    if [ ! -d "$d/.git" ]; then
+        mkdir -p "$(dirname "$d")"
+        git clone -q "https://github.com/${r%%:*}" "$d" && echo "cloned $d" || echo "not cloned: ${r%%:*}"
+        continue
+    fi
     git -C "$d" pull -q --ff-only 2>/dev/null || echo "not updated: $d (local changes or commits in the way)"
 done
 # a folder that moved must stop the build: without it the sketches would
@@ -125,16 +144,10 @@ done
     # the C library's nano variant to fit, no USB serial; unless the sketch's
     # own tools/game.py names a board (FQBN, CHSDtoUSB and CHSDtoSerial need USB
     # serial) or defines (DEFINES, CHSDtoSerial's GFX_CHUNK_ROWS=1)
-    # Games by others laid out the same way (a CHGame game folder with its
-    # tools/game.py and chgame.json) come through here too, under their
-    # author's group: "group:folder"
-    for g in "$CHGAMES"/*/ "$CHAPPS"/*/ "veluv01:$GITHUB/veluv01/EmberHollow/games/EmberHollow" \
-             "SellswordSoftware:$GITHUB/SellswordSoftware/vroom"; do
-        case "$g" in *:/*) group=${g%%:/*}; g=/${g#*:/} ;; *) group=bateske ;; esac
-        [ -d "$g" ] || continue
-        python - "$g" "$group" <<'PY'
+    for g in "$CHGAMES"/*/ "$CHAPPS"/*/; do
+        python - "$g" <<'PY'
 import ast, os, re, sys
-g, group = sys.argv[1], sys.argv[2]
+g, group = sys.argv[1], "bateske"
 opts, defines = "opt=oslto,rtlib=nano,periph=game,usb=uploadonly", ""
 cfg = os.path.join(g, "tools", "game.py")
 if os.path.exists(cfg):
@@ -236,25 +249,10 @@ build_one "$first"
 tail -n +2 "$WORK/list.txt" | tr '\n' '\0' |
     xargs -0 -P "$JOBS" -I{} sh -c "$(declare -f winpath build_one); build_one \"\$1\"" _ {}
 
-# The cart picture (chgame.json cartImage) of a game outside the board
-# package goes beside its ROM, where make_chg.py takes it for the package
-# (bateske's games in the package are found there by make_chg.py itself)
-python - "$WORK/list.txt" "$OUT" <<'PY'
-import json, os, shutil, sys
-for line in open(sys.argv[1], encoding="utf-8"):
-    group, name, sketch = line.rstrip("\n").split("|")[:3]
-    j = os.path.join(sketch, "chgame.json")
-    if group == "bateske" or not os.path.isfile(j) or not os.path.isfile(os.path.join(sys.argv[2], group, name + ".bin")):
-        continue
-    art = json.load(open(j, encoding="utf-8")).get("cartImage")
-    if art and os.path.isfile(os.path.join(sketch, art)):
-        shutil.copy2(os.path.join(sketch, art), os.path.join(sys.argv[2], group, name + ".png"))
-PY
-
 # ROMs of targets that are gone (the *_embedded games had a binary per level
 # pack before their levels moved to the card): only what the list builds stays
 # in the groups it builds, and their build folders and logs in build/roms go
-# with them; the carts below add theirs afterwards
+# with them
 for gdir in "$OUT"/joyrider3774 "$OUT"/chgfx; do
     group=$(basename "$gdir")
     for f in "$gdir"/*.bin; do
@@ -267,157 +265,6 @@ for gdir in "$OUT"/joyrider3774 "$OUT"/chgfx; do
         name=$(basename "$d")
         grep -q "^$group|$name|" "$WORK/list.txt" || rm -rf "$d" "$WORK/$group/$name.log"
     done
-done
-
-# Games published as CHGame carts (.chgame, spec/chgame.md in CHGame: a ZIP
-# with the release image rev0.bin, the box art and the game's SD files),
-# taken from their newest GitHub release rather than built: Ethan's Critters
-# compiles the hash of its 44 MB card file in, and that file is only
-# published with the release (its art is sold, not in the repository), so a
-# build of main says WRONG CARD DATA with it. Each gives
-# roms/<group>/<name>.bin, its box art roms/<group>/<name>.png (make_chg.py's
-# picture) and its SD files in build/carts/<name>/sdcard/ (the newest
-# release, prereleases included; downloaded again only when it changes)
-CARTS="bateske|EthansCritters
-bateske|OtherRealm"
-echo "$CARTS" | while IFS='|' read -r group repo; do
-    python - "$group" "$repo" "$OUT" "$HERE/build/carts" <<'PY'
-import io, json, os, shutil, sys, urllib.request, zipfile
-group, repo, out, cache = sys.argv[1:5]
-api = "https://api.github.com/repos/%s/%s/releases" % (group, repo)
-try:
-    releases = json.load(urllib.request.urlopen(api, timeout=60))
-    rel = next(r for r in releases if any(a["name"].endswith(".chgame") for a in r["assets"]))
-    asset = next(a for a in rel["assets"] if a["name"].endswith(".chgame"))
-except Exception as e:
-    print("FAILED  %s/%s  - no release cart (%s)" % (group, repo, e))
-    sys.exit(0)
-d = os.path.join(cache, repo)
-os.makedirs(d, exist_ok=True)
-cart = os.path.join(d, asset["name"])
-if not os.path.exists(cart) or os.path.getsize(cart) != asset["size"]:
-    for f in os.listdir(d):
-        if f.endswith(".chgame"):
-            os.remove(os.path.join(d, f))
-    with urllib.request.urlopen(asset["browser_download_url"], timeout=600) as r, open(cart, "wb") as f:
-        shutil.copyfileobj(r, f)
-z = zipfile.ZipFile(cart)
-names = z.namelist()
-binary = next(n for n in names if n.endswith("/rev0.bin"))
-game = binary.rsplit("/", 1)[0]
-os.makedirs(os.path.join(out, group), exist_ok=True)
-with open(os.path.join(out, group, repo + ".bin"), "wb") as f:
-    f.write(z.read(binary))
-if game + "/cart.png" in names:
-    with open(os.path.join(out, group, repo + ".png"), "wb") as f:
-        f.write(z.read(game + "/cart.png"))
-sd = os.path.join(d, "sdcard")
-shutil.rmtree(sd, ignore_errors=True)
-for n in names:
-    if n.startswith(game + "/sdcard/") and not n.endswith("/"):
-        p = os.path.join(sd, n[len(game) + len("/sdcard/"):])
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "wb") as f:
-            f.write(z.read(n))
-with open(os.path.join(d, "release.txt"), "w") as f:
-    f.write(rel["tag_name"])
-print("ok      %s/%s.bin  (%d bytes, release %s)" % (group, repo, z.getinfo(binary).file_size, rel["tag_name"]))
-PY
-done
-
-# Ethan's Critters carries its own copy of CHSd, which sends each card
-# command straight after the previous response, without the 8 idle clocks
-# (N_RC) the SD spec asks for; a strict card (the owner's SanDisk 32 GB) then
-# never initialises, and the game says INSERT CARD. So its release tag is
-# built here from the c:/github clone with that one line added to its CHSd
-# (the fix in the owner's CHGame branch chsd-idle-clocks-before-command), as
-# its own tools build it, and replaces the release image. The rest of the
-# source is the release's, so the card hash compiled in still matches the
-# release's CRITTERS.DAT. If that build fails, the release image stays
-SDFIX="bateske|EthansCritters|EthansCritters"
-echo "$SDFIX" | while IFS='|' read -r group repo sketch; do
-    tag=$(cat "$HERE/build/carts/$repo/release.txt" 2>/dev/null)
-    src="$GITHUB/$repo"
-    [ -n "$tag" ] && [ -d "$src/.git" ] || { echo "FAILED  $group/$repo  - no release tag or no clone for the CHSd fix"; continue; }
-    w="$WORK/sdfix/$repo"
-    rm -rf "$w"
-    mkdir -p "$w"
-    git -C "$src" fetch -q --tags 2>/dev/null
-    git -C "$src" archive "$tag" | tar -x -C "$w" || { echo "FAILED  $group/$repo  - no tag $tag in $src"; continue; }
-    spi=$(find "$w" -path "*libraries/CHSd/src/SdSpi.cpp" | head -1)
-    libs=${spi%/CHSd/src/SdSpi.cpp}
-    python - "$spi" <<'PY' || { echo "FAILED  $group/$repo  - its CHSd changed, the fix does not apply"; continue; }
-import sys
-p = sys.argv[1]
-s = open(p, encoding="utf-8", newline="").read()
-old = "static uint8_t cmd(uint8_t c, uint32_t arg) {\n    xfer((uint8_t)(0x40 | c));\n"
-if old not in s:
-    sys.exit(1)
-s = s.replace(old, "static uint8_t cmd(uint8_t c, uint32_t arg) {\n    xfer(0xFF);\n    xfer((uint8_t)(0x40 | c));\n")
-open(p, "w", encoding="utf-8", newline="").write(s)
-PY
-    bp="$WORK/sdfix/$repo-build"
-    if "$CLI" --config-file "$(winpath "$CONFIG")" compile --fqbn "$BOARD:opt=oslto,rtlib=nano,periph=game,usb=uploadonly" \
-            --build-path "$(winpath "$bp")" --library "$(winpath "$libs/CHGfx")" --library "$(winpath "$libs/CHGame")" \
-            --library "$(winpath "$libs/CHSd")" "$(winpath "$w/$sketch")" > "$bp.log" 2>&1; then
-        cp "$bp/$sketch.ino.bin" "$OUT/$group/$repo.bin"
-        echo "ok      $group/$repo.bin  ($(wc -c < "$OUT/$group/$repo.bin") bytes, release $tag with the CHSd fix)"
-        rm -f "$bp.log"
-    else
-        echo "FAILED  $group/$repo  (CHSd fix build; the release image stays) - $(grep -iE "error" "$bp.log" | head -1 | cut -c1-150)"
-    fi
-done
-
-# Games that carry their own copy of CHGame's libraries and tools (chgame/,
-# vendored from a CHGame commit newer than the board package release, see
-# its chgame/VENDORED.md): built as their own tools build them (chgame/tools/
-# device.py), against those libraries, with the sketch's tools/game.py FQBN
-# (or the release options) and DEFINES. Their cart picture (chgame.json
-# cartImage) goes beside the ROM for make_chg.py.
-# group|repository (in c:/github)|sketch folder in it; the ROM is named after
-# the repository
-VENDORED="bateske|CHeleste|Cheleste
-jadflat|jadflat/CHBas|Bas
-jadflat|jadflat/CHCeleste2|Celeste2
-jadflat|jadflat/CHSpaceCab|SpaceCab"
-echo "$VENDORED" | while IFS='|' read -r group repo sketch; do
-    src="$GITHUB/$repo"
-    repo=$(basename "$repo")
-    libs="$src/chgame/platform/board/arduino/CHGame/libraries"
-    [ -d "$src/$sketch" ] && [ -d "$libs" ] || { echo "FAILED  $group/$repo  - no clone or no vendored libraries in $src"; continue; }
-    cfg=$(python - "$src/$sketch" <<'PY'
-import ast, os, re, sys
-cfg = os.path.join(sys.argv[1], "tools", "game.py")
-text = open(cfg, encoding="utf-8").read() if os.path.exists(cfg) else ""
-m = re.search(r'^FQBN\s*=\s*"CHGame:ch32v:rev0:([^"]*)"', text, re.M)
-opts = m.group(1) if m else "opt=oslto,rtlib=nano,periph=game,usb=uploadonly"
-m = re.search(r'^DEFINES\s*=\s*(\[.*?\])', text, re.M | re.S)
-print(opts + "|" + (" ".join("-D" + d for d in ast.literal_eval(m.group(1))) if m else ""))
-PY
-)
-    opts=${cfg%%|*}
-    defines=${cfg#*|}
-    bp="$WORK/$group/$repo"
-    mkdir -p "$bp" "$OUT/$group"
-    set -- --config-file "$(winpath "$CONFIG")" compile --fqbn "$BOARD:$opts" --build-path "$(winpath "$bp")" \
-        --library "$(winpath "$libs/CHGfx")" --library "$(winpath "$libs/CHGame")" --library "$(winpath "$libs/CHSd")"
-    if [ -n "$defines" ]; then
-        set -- "$@" --build-property "compiler.c.extra_flags=$defines" --build-property "compiler.cpp.extra_flags=$defines"
-    fi
-    if "$CLI" "$@" "$(winpath "$src/$sketch")" > "$bp.log" 2>&1; then
-        cp "$bp/$sketch.ino.bin" "$OUT/$group/$repo.bin"
-        python - "$src/$sketch" "$OUT/$group/$repo.png" <<'PY'
-import json, os, shutil, sys
-j = os.path.join(sys.argv[1], "chgame.json")
-art = json.load(open(j, encoding="utf-8")).get("cartImage") if os.path.exists(j) else None
-if art and os.path.isfile(os.path.join(sys.argv[1], art)):
-    shutil.copy2(os.path.join(sys.argv[1], art), sys.argv[2])
-PY
-        echo "ok      $group/$repo.bin  ($(grep -o "Sketch uses [0-9]* bytes" "$bp.log" | grep -o "[0-9]*") bytes, its vendored CHGame libraries)"
-        rm -f "$bp.log"
-    else
-        echo "FAILED  $group/$repo  - $(grep -iE "error|overflow" "$bp.log" | head -1 | cut -c1-150)"
-    fi
 done
 
 # and every ROM as a CHG package for the SD menu bootloader, in chg/
