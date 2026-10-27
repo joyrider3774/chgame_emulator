@@ -25,13 +25,25 @@
 #
 # Usage: tools/build_bootloaders.sh
 
-GITHUB=${GITHUB:-/c/github}
+# c:/github on Windows, ~/github on Linux and WSL (as build_roms.sh); the
+# CHGame clone is made there when it is missing. The toolchain is the board
+# package's, which tools/build_roms.sh installs when it is missing.
+if [ "$(uname -s)" = Linux ]; then
+    GITHUB=${GITHUB:-$HOME/github}
+else
+    GITHUB=${GITHUB:-/c/github}
+fi
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 SRC="$GITHUB/CHGame/platform/bootloader"
 OUT="$HERE/bootloaders"
 
-[ -d "$SRC" ] || { echo "no $SRC: clone https://github.com/bateske/CHGame into $GITHUB"; exit 1; }
-git -C "$GITHUB/CHGame" pull -q --ff-only 2>/dev/null
+if [ ! -d "$GITHUB/CHGame/.git" ]; then
+    mkdir -p "$GITHUB"
+    git clone -q https://github.com/bateske/CHGame "$GITHUB/CHGame" && echo "cloned $GITHUB/CHGame" ||
+        { echo "not cloned: bateske/CHGame"; exit 1; }
+fi
+git -C "$GITHUB/CHGame" pull -q --ff-only 2>/dev/null || echo "not updated: $GITHUB/CHGame (local changes or commits in the way)"
+[ -d "$SRC" ] || { echo "no $SRC (bateske/CHGame reorganised?)"; exit 1; }
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
