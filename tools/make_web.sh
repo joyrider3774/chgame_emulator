@@ -6,11 +6,31 @@
 #   tools/make_web.sh            build only
 #   tools/make_web.sh serve      build, then serve the repository on http://127.0.0.1:8000
 #
-# EMSDK defaults to c:/github/emsdk.
+# EMSDK defaults to c:/github/emsdk (~/github/emsdk on Linux and WSL). When
+# there is neither an emsdk there nor an emcmake on the PATH, emsdk is cloned
+# there and the Emscripten version this emulator is built with installed.
 
-EMSDK=${EMSDK:-/c/github/emsdk}
+EMSCRIPTEN_VERSION=6.0.4
+if [ "$(uname -s)" = Linux ]; then
+    EMSDK=${EMSDK:-$HOME/github/emsdk}
+else
+    EMSDK=${EMSDK:-/c/github/emsdk}
+fi
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 EM="$EMSDK/upstream/emscripten"
+if [ ! -f "$EM/emcmake.py" ] && ! command -v emcmake > /dev/null; then
+    echo "Emscripten not found: installing emsdk $EMSCRIPTEN_VERSION into $EMSDK"
+    [ -d "$EMSDK/.git" ] || git clone -q https://github.com/emscripten-core/emsdk "$EMSDK" || exit 1
+    # emsdk.bat on Windows, the emsdk script elsewhere (it brings its own
+    # Python and Node on Windows, uses the system's python3 on Linux)
+    if [ "$(uname -s)" = Linux ]; then
+        EMSDK_CMD="$EMSDK/emsdk"
+    else
+        EMSDK_CMD="$EMSDK/emsdk.bat"
+    fi
+    "$EMSDK_CMD" install "$EMSCRIPTEN_VERSION" && "$EMSDK_CMD" activate "$EMSCRIPTEN_VERSION" > /dev/null ||
+        { echo "emsdk install failed"; exit 1; }
+fi
 PY=$(ls "$EMSDK"/python/*/python.exe 2>/dev/null | head -1)
 [ -n "$PY" ] || PY=python3
 NODE_BIN=$(dirname "$(ls "$EMSDK"/node/*/bin/node* 2>/dev/null | head -1)")
@@ -26,6 +46,15 @@ else
 fi
 GEN=
 command -v ninja > /dev/null && GEN="-G Ninja"
+# the same checkout built from Windows and from WSL: cmake will not reuse a
+# cache made for the other's path to it (C:/github/... or /mnt/c/github/...),
+# so that cache goes and the build folder is configured afresh
+SRC=$(pwd -W 2>/dev/null || pwd)
+if [ -f build_web/CMakeCache.txt ] &&
+   ! grep -qix "CMAKE_HOME_DIRECTORY:INTERNAL=$SRC" build_web/CMakeCache.txt; then
+    echo "build_web was configured from elsewhere ($(grep '^CMAKE_HOME_DIRECTORY' build_web/CMakeCache.txt | cut -d= -f2)): configuring it again"
+    rm -rf build_web/CMakeCache.txt build_web/CMakeFiles
+fi
 $EMCMAKE cmake -S . -B build_web $GEN -DCMAKE_BUILD_TYPE=Release > /dev/null || exit 1
 # the shell page is a link option, which cmake does not track: relink when it changes
 [ web/shell.html -nt build_web/CHGame_Emulator.html ] && rm -f build_web/CHGame_Emulator.html
@@ -111,5 +140,5 @@ if [ "$1" = "serve" ]; then
     # serving the repository root makes roms/ reachable as ../roms/... for testing:
     # http://127.0.0.1:8000/build_web/CHGame_Emulator.html?rom=../roms/bateske/CHChess.bin
     echo "http://127.0.0.1:8000/build_web/CHGame_Emulator.html"
-    python -m http.server 8000 --bind 127.0.0.1
+    "$PY" -m http.server 8000 --bind 127.0.0.1
 fi
