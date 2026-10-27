@@ -357,4 +357,4 @@ for gdir in "$OUT"/joyrider3774 "$OUT"/chgfx; do
 done
 
 # and every ROM as a CHG package for the SD menu bootloader, in chg/
-"$PYTHON" "$HERE/tools/make_chg.py"
+GITHUB_DIR="$(winpath "$GITHUB")" "$PYTHON" "$HERE/tools/make_chg.py"

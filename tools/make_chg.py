@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Packs every built ROM in roms/ as a CHG game package into chg/.
 
     python tools/make_chg.py
@@ -50,8 +51,16 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROMS = os.path.join(HERE, "roms")
 OUT = os.path.join(HERE, "chg")
 SDCARD = os.path.join(ROMS, "sdcard")
-GITHUB = os.environ.get("GITHUB_DIR", "c:/github")
-SHOTS = os.path.join(GITHUB, "chgames", "screenshots")
+# where the clones are: c:/github, ~/github on Linux and WSL (as
+# build_roms.sh, which passes its own as GITHUB_DIR)
+GITHUB = os.environ.get("GITHUB_DIR") or (os.path.expanduser("~/github")
+                                          if sys.platform.startswith("linux") else "c:/github")
+# the games site is a folder its own build_site.py makes, not a clone: from
+# WSL the Windows one is used when there is none beside the clones
+SITE = os.environ.get("CHGAMES_DIR") or os.path.join(GITHUB, "chgames")
+if not os.path.isdir(SITE) and os.path.isdir("/mnt/c/github/chgames"):
+    SITE = "/mnt/c/github/chgames"
+SHOTS = os.path.join(SITE, "screenshots")
 
 # CHGame's packer, for the picture: c:/github/CHGame/tools/chgpack.py
 sys.path.insert(0, os.path.join(GITHUB, "CHGame", "tools"))
@@ -141,7 +150,9 @@ def title_of(name):
 def cart_images():
     """sketch name -> its cart picture, for the games and apps in the
     installed CHGame board package (the newest version)"""
-    root = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Arduino15", "packages", "CHGame", "hardware", "ch32v")
+    data = (os.path.expanduser("~/.arduino15") if sys.platform.startswith("linux")
+            else os.path.join(os.environ.get("LOCALAPPDATA", ""), "Arduino15"))
+    root = os.path.join(data, "packages", "CHGame", "hardware", "ch32v")
     versions = sorted(glob.glob(os.path.join(root, "*")),
                       key=lambda p: [int(x) if x.isdigit() else 0 for x in re.split(r"[.]", os.path.basename(p))])
     found = {}
@@ -221,7 +232,16 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     taken, index, failed, written = set(), [], 0, []
     carts = cart_images()
-    tmp = tempfile.mkdtemp(prefix="make_chg_")
+    # without them packages lose their pictures; say so rather than make
+    # them quietly
+    if chgpack is None:
+        print("no %s: packages without pictures" % os.path.join(GITHUB, "CHGame", "tools", "chgpack.py"))
+    else:
+        if not carts:
+            print("no CHGame board package found: bateske's packages without their cart pictures")
+        if not os.path.isdir(SHOTS):
+            print("no %s: packages of the other games without pictures" % SHOTS)
+    tmp =tempfile.mkdtemp(prefix="make_chg_")
     for group in sorted(d for d in os.listdir(ROMS) if os.path.isdir(os.path.join(ROMS, d))):
         for f in sorted(os.listdir(os.path.join(ROMS, group))):
             if not f.lower().endswith(".bin"):

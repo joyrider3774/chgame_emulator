@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Fits the emulator's piezo filter to a recording of a real CHGame.
 
     python tools/fit_piezo.py recording.wav [emulator.wav]
