@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Builds the test ROMs in roms/ from their sources in c:/github with the
 # arduino-cli that ships with Arduino IDE 2, using the IDE's own settings
 # (~/.arduinoIDE/arduino-cli.yaml): the board package and the sketchbook's
@@ -30,10 +30,27 @@
 # Each project is built with the board settings its README asks for.
 # Usage: tools/build_roms.sh [jobs]      (default 4 builds at once)
 
-GITHUB=${GITHUB:-/c/github}
-CLI=${ARDUINO_CLI:-/c/arduino2/resources/app/lib/backend/resources/arduino-cli.exe}
-CONFIG=${ARDUINO_CONFIG:-$HOME/.arduinoIDE/arduino-cli.yaml}
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+# Git Bash on Windows, or Linux. WSL counts as Linux: a Linux arduino-cli and
+# the package's Linux toolchain, not the Windows ones through interop (a
+# Windows arduino-cli cannot read the Linux paths it is given)
+if [ "$(uname -s)" = Linux ]; then
+    GITHUB=${GITHUB:-$HOME/github}
+    CLI=${ARDUINO_CLI:-$(command -v arduino-cli)}
+    ARDUINO_DATA="$HOME/.arduino15"
+    CLIDIR="$HERE/build/arduino-cli-linux"
+    CLIURL=https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Linux_64bit.tar.gz
+else
+    GITHUB=${GITHUB:-/c/github}
+    CLI=${ARDUINO_CLI:-/c/arduino2/resources/app/lib/backend/resources/arduino-cli.exe}
+    ARDUINO_DATA="$(cygpath -u "$LOCALAPPDATA")/Arduino15"
+    CLIDIR="$HERE/build/arduino-cli"
+    CLIURL=https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Windows_64bit.zip
+fi
+CONFIG=${ARDUINO_CONFIG:-$HOME/.arduinoIDE/arduino-cli.yaml}
+# python on Windows (python3 there can be the Microsoft Store's stub), often
+# only python3 on Linux
+PYTHON=$(command -v python || command -v python3)
 OUT="$HERE/roms"
 WORK="$HERE/build/roms"
 JOBS=${1:-4}
@@ -43,12 +60,62 @@ winpath() { cygpath -w "$1" 2>/dev/null || echo "$1"; }
 
 mkdir -p "$OUT" "$WORK"
 
+# a machine without Arduino IDE 2: arduino-cli is downloaded into
+# build/arduino-cli (build/arduino-cli-linux on Linux: the same checkout can
+# be built from Windows and WSL), and without the IDE's settings it gets a
+# settings file of its own there: the usual data folder (board packages are
+# shared with a later IDE install) and a sketchbook of its own, so no
+# sketchbook library can take the place of the board package's
+if [ ! -x "$CLI" ]; then
+    CLI="$CLIDIR/arduino-cli"
+    [ "$(uname -s)" = Linux ] || CLI="$CLI.exe"
+    if [ ! -x "$CLI" ]; then
+        echo "arduino-cli not found: downloading it into $CLIDIR"
+        mkdir -p "$CLIDIR"
+        case $CLIURL in
+            *.zip) curl -fsSL -o "$CLIDIR/cli.zip" "$CLIURL" &&
+                       unzip -oq "$CLIDIR/cli.zip" -d "$CLIDIR" && rm -f "$CLIDIR/cli.zip" ;;
+            *)     curl -fsSL "$CLIURL" | tar -xz -C "$CLIDIR" ;;
+        esac || { echo "arduino-cli download failed"; exit 1; }
+    fi
+fi
+if [ ! -f "$CONFIG" ]; then
+    CONFIG="$CLIDIR/arduino-cli.yaml"
+    mkdir -p "$CLIDIR/sketchbook"
+    [ -f "$CONFIG" ] || cat > "$CONFIG" <<EOF
+board_manager:
+    additional_urls:
+        - https://github.com/bateske/CHGame/releases/latest/download/package_chgame_index.json
+directories:
+    data: $(winpath "$ARDUINO_DATA")
+    user: $(winpath "$CLIDIR/sketchbook")
+EOF
+fi
+
 # the installed board package: its newest version's libraries, which every
 # build finds by itself (platform libraries), and the casino games and apps
-# among their examples
-DATA=$("$CLI" --config-file "$(winpath "$CONFIG")" config get directories.data 2>/dev/null | tr -d '')
-[ -n "$DATA" ] || DATA="$LOCALAPPDATA/Arduino15"
+# among their examples. Installed (the latest release) when it is missing.
+DATA=$("$CLI" --config-file "$(winpath "$CONFIG")" config get directories.data 2>/dev/null | tr -d '
+')
+[ -n "$DATA" ] || DATA="$ARDUINO_DATA"
 PKG=$(ls -d "$(cygpath -u "$DATA" 2>/dev/null || echo "$DATA")"/packages/CHGame/hardware/ch32v/*/ 2>/dev/null | sort -V | tail -1)
+if [ -z "$PKG" ]; then
+    echo "CHGame board package not installed: installing it"
+    "$CLI" --config-file "$(winpath "$CONFIG")" core update-index &&
+        "$CLI" --config-file "$(winpath "$CONFIG")" core install CHGame:ch32v ||
+        { echo "CHGame board package install failed"; exit 1; }
+    PKG=$(ls -d "$(cygpath -u "$DATA" 2>/dev/null || echo "$DATA")"/packages/CHGame/hardware/ch32v/*/ 2>/dev/null | sort -V | tail -1)
+fi
+# dot_a_linkage=true, as the games' workflows add it after installing the
+# package (bateske/CHGame PR #20): without it CHGfx's strong
+# DMA1_Channel3_IRQHandler keeps its 8 KB framebuffer in every sketch that
+# includes CHGame.h
+for props in "${PKG%/}/libraries/CHGfx/library.properties" "${PKG%/}/libraries/CHGame/library.properties" \
+             "${PKG%/}/libraries/CHSd/library.properties"; do
+    if [ -f "$props" ] && ! grep -q "^dot_a_linkage=true" "$props"; then
+        printf '\ndot_a_linkage=true\n' >> "$props" && echo "dot_a_linkage=true added to $props"
+    fi
+done
 CHGLIBS="${PKG%/}/libraries"
 CHGFX="$CHGLIBS/CHGfx"
 CHGAMELIB="$CHGLIBS/CHGame"
@@ -93,12 +160,20 @@ done
 # FileBrowser uses Arduino's SD library, which stops at "#error Architecture
 # or board not supported" on the CH32. A copy in the build folder gets the
 # CH32 pin map (the fix CHSDtoUSB and CHStlView carry); the installed
-# library is left alone. Install it once with: arduino-cli lib install SD
-SDLIB=$("$CLI" --config-file "$(winpath "$CONFIG")" lib list SD --format json 2>/dev/null |
-        python -c "import json,sys; d=json.load(sys.stdin); l=d.get('installed_libraries',d) if isinstance(d,dict) else d; print(l[0]['library']['install_dir'] if l else '')" 2>/dev/null)
+# library is left alone (installed when it is missing).
+sdlib() {
+    "$CLI" --config-file "$(winpath "$CONFIG")" lib list SD --format json 2>/dev/null |
+        "$PYTHON" -c "import json,sys; d=json.load(sys.stdin); l=d.get('installed_libraries',d) if isinstance(d,dict) else d; print(l[0]['library']['install_dir'] if l else '')" 2>/dev/null
+}
+SDLIB=$(sdlib)
+if [ -z "$SDLIB" ]; then
+    echo "Arduino SD library not installed: installing it"
+    "$CLI" --config-file "$(winpath "$CONFIG")" lib update-index > /dev/null &&
+        "$CLI" --config-file "$(winpath "$CONFIG")" lib install SD > /dev/null && SDLIB=$(sdlib)
+fi
 if [ -n "$SDLIB" ] && [ -d "$SDLIB" ]; then
     rm -rf "$WORK/libs/SD" && mkdir -p "$WORK/libs" && cp -r "$SDLIB" "$WORK/libs/SD"
-    python - "$WORK/libs/SD/src/utility/Sd2PinMap.h" <<'PY'
+    "$PYTHON" - "$WORK/libs/SD/src/utility/Sd2PinMap.h" <<'PY'
 import sys
 p = sys.argv[1]
 t = open(p, encoding="utf-8").read()
@@ -128,7 +203,7 @@ mkdir -p "$OUT/sdcard"
 for g in "$GITHUB"/*_embedded; do
     [ -f "$g/tools/mkcard.py" ] || continue
     n=$(basename "$g")
-    if python "$g/tools/mkcard.py" > "$WORK/$n-mkcard.log" 2>&1; then
+    if "$PYTHON" "$g/tools/mkcard.py" > "$WORK/$n-mkcard.log" 2>&1; then
         dat="$g/releases/$(sed -n 's/^#define CARD_FILE_NAME "\(.*\)"/\1/p' "$g/source/$n/cardindex.h")"
         cp "$dat" "$OUT/sdcard/" && echo "ok      sdcard/$(basename "$dat")  ($(wc -c < "$dat") bytes)"
         rm -f "$WORK/$n-mkcard.log"
@@ -145,7 +220,7 @@ done
     # own tools/game.py names a board (FQBN, CHSDtoUSB and CHSDtoSerial need USB
     # serial) or defines (DEFINES, CHSDtoSerial's GFX_CHUNK_ROWS=1)
     for g in "$CHGAMES"/*/ "$CHAPPS"/*/; do
-        python - "$g" <<'PY'
+        "$PYTHON" - "$g" <<'PY'
 import ast, os, re, sys
 g, group = sys.argv[1], "bateske"
 opts, defines = "opt=oslto,rtlib=nano,periph=game,usb=uploadonly", ""
@@ -182,7 +257,7 @@ PY
     done
     # the CHGame targets of each game's own release script, with their defines
     for g in "$GITHUB"/*_embedded; do
-        python - "$g" <<'PY'
+        "$PYTHON" - "$g" <<'PY'
 import os, re, sys
 g = sys.argv[1]
 name = os.path.basename(g)[:-len("_embedded")]
@@ -247,7 +322,7 @@ export CLI CONFIG GITHUB WORK OUT BOARD CHGFX CHGAMELIB CHSDLIB
 first=$(head -1 "$WORK/list.txt")
 build_one "$first"
 tail -n +2 "$WORK/list.txt" | tr '\n' '\0' |
-    xargs -0 -P "$JOBS" -I{} sh -c "$(declare -f winpath build_one); build_one \"\$1\"" _ {}
+    xargs -0 -P "$JOBS" -I{} bash -c "$(declare -f winpath build_one); build_one \"\$1\"" _ {}
 
 # ROMs of targets that are gone (the *_embedded games had a binary per level
 # pack before their levels moved to the card): only what the list builds stays
@@ -268,4 +343,4 @@ for gdir in "$OUT"/joyrider3774 "$OUT"/chgfx; do
 done
 
 # and every ROM as a CHG package for the SD menu bootloader, in chg/
-python "$HERE/tools/make_chg.py"
+"$PYTHON" "$HERE/tools/make_chg.py"
