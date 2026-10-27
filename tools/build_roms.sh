@@ -190,6 +190,15 @@ PY
 else
     echo "Arduino SD library not installed: FileBrowser will not build (arduino-cli lib install SD)"
 fi
+# CHGfx's AdafruitGFXCompat example draws through Adafruit's GFX library
+# (on the owner's machine it is in the IDE's sketchbook): installed when it
+# is missing, with Adafruit BusIO, which it depends on
+if ! "$CLI" --config-file "$(winpath "$CONFIG")" lib list "Adafruit GFX Library" 2>/dev/null | grep -q "^Adafruit GFX Library"; then
+    echo "Adafruit GFX library not installed: installing it"
+    { "$CLI" --config-file "$(winpath "$CONFIG")" lib update-index > /dev/null &&
+        "$CLI" --config-file "$(winpath "$CONFIG")" lib install "Adafruit GFX Library" > /dev/null; } ||
+        echo "Adafruit GFX library not installed: AdafruitGFXCompat will not build"
+fi
 
 # The *_embedded games read their art (and the level packs) off the microSD
 # card: one binary each, and a card file <NAME>.DAT that goes in the card's
@@ -303,8 +312,13 @@ EOF
         set -- "$@" --build-property "compiler.c.extra_flags=$defines" --build-property "compiler.cpp.extra_flags=$defines"
     fi
     # parallel builds reading the same library folder now and then fail
-    # without an error message, so a failed build gets one more go
-    if "$CLI" "$@" "$sketch" > "$log" 2>&1 || "$CLI" "$@" "$sketch" > "$log" 2>&1; then
+    # without an error message, so a failed build gets one more go. Without
+    # the libraries' archives: a build that stopped halfway can leave one
+    # with only some of the objects (CHCrossword's CHGame.a had 3 of 10 in
+    # WSL), and arduino-cli takes it as up to date ever after, so every
+    # build of that sketch fails to link
+    if "$CLI" "$@" "$sketch" > "$log" 2>&1 ||
+        { rm -f "$bp"/libraries/*/*.a; "$CLI" "$@" "$sketch" > "$log" 2>&1; }; then
         bin=$(ls "$bp"/*.ino.bin 2>/dev/null | head -1)
         cp "$bin" "$OUT/$group/$name.bin"
         size=$(grep -o "Sketch uses [0-9]* bytes" "$log" | grep -o "[0-9]*")
