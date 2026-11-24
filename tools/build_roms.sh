@@ -217,8 +217,8 @@ fi
 # root. Their tools/mkcard.py writes it into the game's releases/ and the
 # cardindex.h its build checks the card against (the same as committed when
 # the art is), so it runs before the build. The card files are collected in
-# roms/sdcard/, the root of a card for all of them (the web build's and the
-# games site's sample card take them from there)
+# roms/sdcard/, the root of a card for all of them (the web build's sample
+# card takes them from there)
 rm -rf "$OUT/sdcard"
 mkdir -p "$OUT/sdcard"
 for g in "$GITHUB"/*_embedded; do
@@ -230,6 +230,27 @@ for g in "$GITHUB"/*_embedded; do
         rm -f "$WORK/$n-mkcard.log"
     else
         echo "FAILED  $n card file - $(tail -1 "$WORK/$n-mkcard.log")"
+    fi
+done
+
+# Their release carts (releases/CHGame_<Game>.chgame: the Rev0 and Rev1
+# builds and the card file, which the game's own `python
+# tools/build_releases.py --only CHGame` makes) go beside their ROMs as
+# roms/joyrider3774/<name>.chgame: make_chg.py and the games site take a cart
+# over the .bin of the same name (the web emulator's Games menu keeps the .bin
+# and roms/sdcard). One older than the game's last commit is copied all the
+# same, with a warning to run build_releases.py
+mkdir -p "$OUT/joyrider3774"
+for g in "$GITHUB"/*_embedded; do
+    cart=$(ls "$g"/releases/CHGame_*.chgame 2>/dev/null | head -1)
+    [ -n "$cart" ] || continue
+    n=$(basename "$g" _embedded)
+    cmp -s "$cart" "$OUT/joyrider3774/$n.chgame" || cp "$cart" "$OUT/joyrider3774/$n.chgame"
+    last=$(git -C "$g" log -1 --format=%ct 2>/dev/null || echo 0)
+    if [ "$(date -r "$cart" +%s)" -lt "$last" ]; then
+        echo "old     joyrider3774/$n.chgame: older than ${n}_embedded's last commit (python tools/build_releases.py --only CHGame there)"
+    else
+        echo "ok      joyrider3774/$n.chgame"
     fi
 done
 

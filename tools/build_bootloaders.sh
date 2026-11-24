@@ -2,8 +2,10 @@
 # Builds the CHGame bootloaders from bateske/CHGame
 # (https://github.com/bateske/CHGame/tree/main/platform/bootloader) and puts
 # only the binaries in bootloaders/ (gitignored), for the emulator's
-# --bootloader. Every variant its tools/dist.sh makes that is a bootloader,
-# under the names the board package gives them (Tools > Bootloader):
+# --bootloader: Rev0's in bootloaders/, Rev1's (Rev1 and Rev 1.5) in
+# bootloaders/rev1/, as the board package keeps them. Every variant its
+# tools/dist.sh makes that is a bootloader, under the names the board package
+# gives them (Tools > Bootloader):
 #
 #   chgame_sdboot.bin            SD Text Menu (Rainbow)    build.sh release
 #   chgame_sdboot_static.bin     SD Text Menu (Static)     build.sh release --style=static
@@ -19,9 +21,10 @@
 # GAMES folder.
 #
 # Built with the toolchain of the CHGame board package (its build.sh finds it)
-# in a temporary copy of the source, deleted afterwards, so neither the
-# CHGame clone (c:/github/CHGame, pulled first) nor this repository keeps
-# any of it.
+# from bateske's main branch, fetched into the CHGame clone (c:/github/CHGame)
+# and taken out with git archive into a temporary folder, deleted afterwards:
+# the clone may be a fork behind it (the owner's is), and neither its branches
+# and files nor this repository keep any of it.
 #
 # Usage: tools/build_bootloaders.sh
 
@@ -34,7 +37,6 @@ else
     GITHUB=${GITHUB:-/c/github}
 fi
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-SRC="$GITHUB/CHGame/platform/bootloader"
 OUT="$HERE/bootloaders"
 
 if [ ! -d "$GITHUB/CHGame/.git" ]; then
@@ -42,28 +44,35 @@ if [ ! -d "$GITHUB/CHGame/.git" ]; then
     git clone -q https://github.com/bateske/CHGame "$GITHUB/CHGame" && echo "cloned $GITHUB/CHGame" ||
         { echo "not cloned: bateske/CHGame"; exit 1; }
 fi
-git -C "$GITHUB/CHGame" pull -q --ff-only 2>/dev/null || echo "not updated: $GITHUB/CHGame (local changes or commits in the way)"
-[ -d "$SRC" ] || { echo "no $SRC (bateske/CHGame reorganised?)"; exit 1; }
+# bateske's main into FETCH_HEAD: no branch, tag or file of the clone changes
+git -C "$GITHUB/CHGame" fetch -q https://github.com/bateske/CHGame main ||
+    { echo "not fetched: bateske/CHGame"; exit 1; }
+echo "bateske/CHGame $(git -C "$GITHUB/CHGame" describe --tags FETCH_HEAD 2>/dev/null || git -C "$GITHUB/CHGame" rev-parse --short FETCH_HEAD)"
 
-WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
-cp -r "$SRC/." "$WORK/"
-rm -rf "$WORK/build"
-mkdir -p "$OUT"
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+git -C "$GITHUB/CHGame" archive FETCH_HEAD platform/bootloader | tar -x -C "$TMP" ||
+    { echo "no platform/bootloader in bateske/CHGame (reorganised?)"; exit 1; }
+WORK="$TMP/platform/bootloader"
 
-# name|build.sh arguments|its output folder under build/
+# name|build.sh arguments|its output folder under build/ (rev1's get -rev1)
 failed=0
-while IFS='|' read -r name args dir; do
-    # shellcheck disable=SC2086
-    if bash "$WORK/build.sh" $args > "$WORK/$name.log" 2>&1 && [ -f "$WORK/build/$dir/chgame_boot.bin" ]; then
-        cp "$WORK/build/$dir/chgame_boot.bin" "$OUT/$name.bin"
-        echo "ok      bootloaders/$name.bin  $(wc -c < "$OUT/$name.bin") bytes"
-    else
-        tail -20 "$WORK/$name.log"
-        echo "FAILED  $name.bin"
-        failed=1
-    fi
-done <<EOF
+for board in rev0 rev1; do
+    if [ $board = rev0 ]; then dst="$OUT"; sfx=; rel=bootloaders
+    else dst="$OUT/$board"; sfx="-$board"; rel="bootloaders/$board"; fi
+    mkdir -p "$dst"
+    while IFS='|' read -r name args dir; do
+        # shellcheck disable=SC2086
+        if bash "$WORK/build.sh" --board=$board $args > "$WORK/$name$sfx.log" 2>&1 &&
+           [ -f "$WORK/build/$dir$sfx/chgame_boot.bin" ]; then
+            cp "$WORK/build/$dir$sfx/chgame_boot.bin" "$dst/$name.bin"
+            echo "ok      $rel/$name.bin  $(wc -c < "$dst/$name.bin") bytes"
+        else
+            tail -20 "$WORK/$name$sfx.log"
+            echo "FAILED  $rel/$name.bin"
+            failed=1
+        fi
+    done <<EOF
 chgame_sdboot|release|release
 chgame_sdboot_static|release --style=static|release-static
 chgame_sdvisual|release --ui=visual|release-visual
@@ -71,4 +80,5 @@ chgame_sdvisual_static|release --ui=visual --style=static|release-visual-static
 chgame_boot_nomenu|nomenu|nomenu
 chgame_sdboot_locked|locked|locked
 EOF
+done
 exit $failed

@@ -37,6 +37,14 @@ The *_embedded games read their art and levels from a card file of their own
 roms/sdcard/. A package cannot carry it; their packages get a record
 (spec/chg.md) naming it with its size and CRC, as CHGame's card tool writes
 one, and INDEX.TXT says which file each needs.
+
+A game kept in roms/ as a .chgame (CHGame's spec/chgame.md: a ZIP with a
+build per board, its title and author, its cart picture and its card files;
+it wins over a .bin of the same name beside it, which the web emulator's
+Games menu may use) gets the package of the newest board
+it has a build for, with its own title, author and picture, and a record
+naming its card files; INDEX.TXT says they are in the cart (the emulator
+writes them onto its card when it runs the cart).
 """
 import glob
 import json
@@ -225,6 +233,32 @@ def record(image, name, title, author, sd):
     return json.dumps(r, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
 
 
+def read_cart(path, tmp):
+    """(image, title, author, board, picture PNG path or None, {card path: bytes})
+    of a .chgame's first game, the build of the newest board it has"""
+    import zipfile
+    z = zipfile.ZipFile(path)
+    info = json.loads(z.read("info.json"))
+    games = info["games"]
+    game = next((g for g in games if g.get("id") == info.get("launch")), games[0])
+    builds = {b["device"]: b["filename"] for b in game["binaries"]}
+    board = [b for b in TARGETS if b in builds][-1]
+    picture = None
+    if game.get("cartImage"):
+        picture = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]+", "_", path) + ".png")
+        open(picture, "wb").write(z.read(game["cartImage"]))
+    sd = {}
+    pre = game.get("sdcard")
+    if pre:
+        for n in z.namelist():
+            if n.startswith(pre) and not n.endswith("/"):
+                sd[n[len(pre):]] = z.read(n)
+    # the menu shows capitals; plain ASCII for its font
+    title = re.sub(r"[^ -~]", "", game.get("title") or info.get("title") or "").upper().strip()[:19]
+    author = re.sub(r"[^ -~]", "", game.get("author") or info.get("author") or "").strip()
+    return z.read(builds[board]), title, author, board, picture, sd
+
+
 def rom_board(group, name):
     """the board a ROM was built for: <name>.board beside it (build_roms.sh
     writes it), else rev0, what every ROM was before Rev1"""
@@ -263,21 +297,35 @@ def main():
             print("no %s: packages of the other games without pictures" % SHOTS)
     tmp =tempfile.mkdtemp(prefix="make_chg_")
     for group in sorted(d for d in os.listdir(ROMS) if os.path.isdir(os.path.join(ROMS, d))):
-        for f in sorted(os.listdir(os.path.join(ROMS, group))):
-            if not f.lower().endswith(".bin"):
+        files = os.listdir(os.path.join(ROMS, group))
+        for f in sorted(files):
+            name, ext = os.path.splitext(f)
+            # a .bin with a .chgame of the same name beside it: the cart is the game
+            if ext.lower() not in (".bin", ".chgame") or (ext.lower() == ".bin" and name + ".chgame" in files):
                 continue
-            name = f[:-4]
-            picture = carts.get(name) if group == "bateske" else None
-            # a release cart's box art, which build_roms.sh puts beside its ROM
-            beside = os.path.join(ROMS, group, name + ".png")
-            picture = picture or (beside if os.path.isfile(beside) else None)
-            picture = picture or site_shot(group, name, tmp)
-            image = open(os.path.join(ROMS, group, f), "rb").read()
-            sd = card_files(group, name)
-            board = rom_board(group, name)
+            if ext.lower() == ".chgame":
+                try:
+                    image, title, author, board, picture, sd = read_cart(os.path.join(ROMS, group, f), tmp)
+                except Exception as e:
+                    print("skipped %s/%s: %s" % (group, f, e))
+                    failed += 1
+                    continue
+                title = title or title_of(name)
+                author = author or group
+                picture = picture or site_shot(group, name, tmp)
+            else:
+                picture = carts.get(name) if group == "bateske" else None
+                # a release cart's box art, which build_roms.sh puts beside its ROM
+                beside = os.path.join(ROMS, group, name + ".png")
+                picture = picture or (beside if os.path.isfile(beside) else None)
+                picture = picture or site_shot(group, name, tmp)
+                image = open(os.path.join(ROMS, group, f), "rb").read()
+                sd = card_files(group, name)
+                board = rom_board(group, name)
+                title, author = title_of(name), group
             try:
-                data = package(image, title_of(name), group, picture,
-                               record(image, name, title_of(name), group, sd) if sd else None, board)
+                data = package(image, title, author, picture,
+                               record(image, name, title, author, sd) if sd else None, board)
             except ValueError as e:
                 print("skipped %s/%s: %s" % (group, f, e))
                 failed += 1
@@ -292,8 +340,9 @@ def main():
                 written.append(short)
             rom_time = os.path.getmtime(os.path.join(ROMS, group, f))
             os.utime(path, (rom_time, rom_time))
-            index.append("%-12s %-20s %-5s roms/%s/%s%s" % (short, title_of(name), board, group, f,
-                         "".join("  + %s in the card's root" % p for p in sorted(sd))))
+            where = "in the cart" if ext.lower() == ".chgame" else "in the card's root"
+            index.append("%-12s %-20s %-5s roms/%s/%s%s" % (short, title, board, group, f,
+                         "".join("  + %s %s" % (p, where) for p in sorted(sd))))
     # the menu's own files, beside the packages
     for fname, data in menu_files().items():
         path = os.path.join(OUT, fname)
