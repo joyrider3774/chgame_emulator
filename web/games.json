@@ -1,186 +1,242 @@
 [
  {
   "file": "roms/bateske/CH32Doom.bin",
-  "name": "bateske / CH32Doom"
+  "name": "bateske / CH32Doom",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHBackgammon.bin",
-  "name": "bateske / CHBackgammon"
+  "name": "bateske / CHBackgammon",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHBingo.bin",
-  "name": "bateske / CHBingo"
+  "name": "bateske / CHBingo",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHBlackjack.bin",
-  "name": "bateske / CHBlackjack"
+  "name": "bateske / CHBlackjack",
+  "board": "rev0"
+ },
+ {
+  "file": "roms/bateske/CHBoardTest.chgame",
+  "name": "bateske / CHBoardTest (Rev1 / Rev 1.5)",
+  "board": "rev1"
+ },
+ {
+  "file": "roms/bateske/CHBoardTest.chgame",
+  "name": "bateske / CHBoardTest (Rev0)",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHBoardwalk.bin",
-  "name": "bateske / CHBoardwalk"
+  "name": "bateske / CHBoardwalk",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHCheckers.bin",
-  "name": "bateske / CHCheckers"
+  "name": "bateske / CHCheckers",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHChess.bin",
-  "name": "bateske / CHChess"
+  "name": "bateske / CHChess",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHCraps.bin",
-  "name": "bateske / CHCraps"
+  "name": "bateske / CHCraps",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHCrossword.bin",
-  "name": "bateske / CHCrossword"
+  "name": "bateske / CHCrossword",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHDominoes.bin",
-  "name": "bateske / CHDominoes"
+  "name": "bateske / CHDominoes",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHFour.bin",
-  "name": "bateske / CHFour"
+  "name": "bateske / CHFour",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHMahjong.bin",
-  "name": "bateske / CHMahjong"
+  "name": "bateske / CHMahjong",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHMultiSprite.bin",
-  "name": "bateske / CHMultiSprite"
+  "name": "bateske / CHMultiSprite",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHPoker.bin",
-  "name": "bateske / CHPoker"
+  "name": "bateske / CHPoker",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHRoulette.bin",
-  "name": "bateske / CHRoulette"
+  "name": "bateske / CHRoulette",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHSDtoUSB.bin",
-  "name": "bateske / CHSDtoUSB"
+  "name": "bateske / CHSDtoUSB",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHSlots.bin",
-  "name": "bateske / CHSlots"
+  "name": "bateske / CHSlots",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHSnakes.bin",
-  "name": "bateske / CHSnakes"
+  "name": "bateske / CHSnakes",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHSolitaire.bin",
-  "name": "bateske / CHSolitaire"
+  "name": "bateske / CHSolitaire",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHStlView.bin",
-  "name": "bateske / CHStlView"
+  "name": "bateske / CHStlView",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHTicTacToe.bin",
-  "name": "bateske / CHTicTacToe"
+  "name": "bateske / CHTicTacToe",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHWords.bin",
-  "name": "bateske / CHWords"
+  "name": "bateske / CHWords",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHWordWheel.bin",
-  "name": "bateske / CHWordWheel"
+  "name": "bateske / CHWordWheel",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/CHYacht.bin",
-  "name": "bateske / CHYacht"
+  "name": "bateske / CHYacht",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/FileBrowser.bin",
-  "name": "bateske / FileBrowser"
+  "name": "bateske / FileBrowser",
+  "board": "rev0"
  },
  {
   "file": "roms/bateske/NewBlocksColor.bin",
-  "name": "bateske / NewBlocksColor"
+  "name": "bateske / NewBlocksColor",
+  "board": "rev0"
  },
  {
   "file": "roms/filmote/CHSpriteView.bin",
-  "name": "filmote / CHSpriteView"
+  "name": "filmote / CHSpriteView",
+  "board": "rev0"
  },
  {
   "file": "roms/chgfx/AdafruitGFXCompat.bin",
-  "name": "chgfx / AdafruitGFXCompat"
+  "name": "chgfx / AdafruitGFXCompat",
+  "board": "rev0"
  },
  {
   "file": "roms/chgfx/Benchmark.bin",
-  "name": "chgfx / Benchmark"
+  "name": "chgfx / Benchmark",
+  "board": "rev0"
  },
  {
   "file": "roms/chgfx/Demoscene.bin",
-  "name": "chgfx / Demoscene"
+  "name": "chgfx / Demoscene",
+  "board": "rev0"
  },
  {
   "file": "roms/chgfx/Fonts.bin",
-  "name": "chgfx / Fonts"
+  "name": "chgfx / Fonts",
+  "board": "rev0"
  },
  {
   "file": "roms/chgfx/GameKit.bin",
-  "name": "chgfx / GameKit"
+  "name": "chgfx / GameKit",
+  "board": "rev0"
  },
  {
   "file": "roms/chgfx/HelloGraphics.bin",
-  "name": "chgfx / HelloGraphics"
+  "name": "chgfx / HelloGraphics",
+  "board": "rev0"
  },
  {
   "file": "roms/chgfx/PartialUpdate.bin",
-  "name": "chgfx / PartialUpdate"
+  "name": "chgfx / PartialUpdate",
+  "board": "rev0"
  },
  {
   "file": "roms/joyrider3774/blips.bin",
-  "name": "joyrider3774 / blips"
+  "name": "joyrider3774 / blips",
+  "board": "rev0"
  },
  {
   "file": "roms/joyrider3774/blockdude.bin",
-  "name": "joyrider3774 / blockdude"
+  "name": "joyrider3774 / blockdude",
+  "board": "rev0"
  },
  {
   "file": "roms/joyrider3774/BunnyMark.bin",
-  "name": "joyrider3774 / BunnyMark"
+  "name": "joyrider3774 / BunnyMark",
+  "board": "rev0"
  },
  {
   "file": "roms/joyrider3774/chg_lcdtest.bin",
-  "name": "joyrider3774 / chg_lcdtest"
+  "name": "joyrider3774 / chg_lcdtest",
+  "board": "rev0"
  },
  {
   "file": "roms/joyrider3774/formula1.bin",
-  "name": "joyrider3774 / formula1"
+  "name": "joyrider3774 / formula1",
+  "board": "rev0"
  },
  {
   "file": "roms/joyrider3774/mazethingie.bin",
-  "name": "joyrider3774 / mazethingie"
+  "name": "joyrider3774 / mazethingie",
+  "board": "rev0"
  },
  {
   "file": "roms/joyrider3774/puzzleland.bin",
-  "name": "joyrider3774 / puzzleland"
+  "name": "joyrider3774 / puzzleland",
+  "board": "rev0"
  },
  {
   "file": "roms/joyrider3774/rubido.bin",
-  "name": "joyrider3774 / rubido"
+  "name": "joyrider3774 / rubido",
+  "board": "rev0"
  },
  {
   "file": "roms/joyrider3774/sokoban.bin",
-  "name": "joyrider3774 / sokoban"
+  "name": "joyrider3774 / sokoban",
+  "board": "rev0"
  },
  {
   "file": "roms/joyrider3774/waternet.bin",
-  "name": "joyrider3774 / waternet"
+  "name": "joyrider3774 / waternet",
+  "board": "rev0"
  },
  {
   "file": "roms/joyrider3774/znax.bin",
-  "name": "joyrider3774 / znax"
+  "name": "joyrider3774 / znax",
+  "board": "rev0"
  },
  {
   "file": "roms/poevoid/CHGame-Ponglike.bin",
-  "name": "poevoid / CHGame-Ponglike"
+  "name": "poevoid / CHGame-Ponglike",
+  "board": "rev0"
  }
 ]

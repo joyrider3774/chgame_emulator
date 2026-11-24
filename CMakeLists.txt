@@ -24,6 +24,9 @@ add_library(chgame_core STATIC
     src/loader.c
     src/sdspi.c
     src/sdcard.c
+    src/board.c
+    src/cart.c
+    src/inflate.c
     src/bootloader_image.c
 )
 target_include_directories(chgame_core PUBLIC src)

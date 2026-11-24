@@ -68,6 +68,13 @@ try:
     import chgpack
 except ImportError:
     chgpack = None
+# Rev1 joined chgpack's BOARDS with board package 0.4.0 (2026-11-17); a clone
+# from before has its id reserved only. It has rev0's layout and limits
+# (spec/chgame.md, "Devices and revisions"), so it is added the same way
+if chgpack is not None and 0x31524743 not in getattr(chgpack, "BOARDS", {0x31524743: 0}):
+    _rev0 = chgpack.BOARDS[0x35335843]
+    chgpack.BOARDS[0x31524743] = ("rev1",) + tuple(_rev0[1:])
+    getattr(chgpack, "RESERVED", {}).pop(0x31524743, None)
 # and its card tool, for the menu's own files
 try:
     from chcart import runtime as chcart_runtime
@@ -94,7 +101,10 @@ def menu_files():
 MAGIC = 0x31474843          # "CHG1"
 FORMAT_VERSION = 1
 HEADER_BYTES = 512
-TARGET_ID = 0x35335843      # "CX35": the CHGame, CH32X035G8U6
+# The boards' target ids (spec/chgame.md): a package is for one board, and a
+# bootloader installs only its own board's
+TARGETS = {"rev0": 0x35335843,   # "CX35": CHGame Rev0
+           "rev1": 0x31524743}   # "CGR1": CHGame Rev1 and Rev 1.5
 LAYOUT_ID = 0x003000F7      # program at 0x3000, metadata page at 0xF700
 APP_MAX = 0xF700 - 0x3000   # 50,944 bytes
 BOOT_SIG = 0x4C424843       # "CHBL" at offset 8 marks a bootloader image
@@ -106,14 +116,14 @@ def text(s, n):
     return b.ljust(n, b"\0")
 
 
-def pack(image, title, author):
+def pack(image, title, author, board):
     payload = image + b"\xff" * (-len(image) % 4)
     if not payload or len(payload) > APP_MAX:
         raise ValueError("%d bytes; a program is at most %d" % (len(payload), APP_MAX))
     if len(payload) >= 12 and struct.unpack_from("<I", payload, 8)[0] == BOOT_SIG:
         raise ValueError("a bootloader image, not a program")
     h = bytearray(HEADER_BYTES)
-    struct.pack_into("<IHHIIIIII", h, 0, MAGIC, FORMAT_VERSION, HEADER_BYTES, TARGET_ID, LAYOUT_ID,
+    struct.pack_into("<IHHIIIIII", h, 0, MAGIC, FORMAT_VERSION, HEADER_BYTES, TARGETS[board], LAYOUT_ID,
                      len(payload), zlib.crc32(payload) & 0xFFFFFFFF, 0, 0)
     h[0x20:0x40] = text(title, 32)
     h[0x40:0x50] = text(author, 16)
@@ -215,17 +225,27 @@ def record(image, name, title, author, sd):
     return json.dumps(r, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
 
 
-def package(image, title, author, picture_png, rec=None):
-    """the package, with CHGame's packer and the picture when it can be had"""
+def rom_board(group, name):
+    """the board a ROM was built for: <name>.board beside it (build_roms.sh
+    writes it), else rev0, what every ROM was before Rev1"""
+    p = os.path.join(ROMS, group, name + ".board")
+    board = open(p).read().strip() if os.path.isfile(p) else "rev0"
+    return board if board in TARGETS else "rev0"
+
+
+def package(image, title, author, picture_png, rec=None, board="rev0"):
+    """the package for the board the ROM was built for, with CHGame's packer
+    and the picture when it can be had"""
     if chgpack is None:
-        return pack(image, title, author)
+        return pack(image, title, author, board)
     picture = None
     if picture_png:
         try:
             picture = chgpack.picture_file(picture_png)
         except Exception as e:      # a PNG breaking the picture rule: no picture, as chcart does
             print("no picture for %s: %s" % (title, e))
-    return chgpack.pack(chgpack.pad_image(image), title, author[:15], picture=picture, record=rec)
+    return chgpack.pack(chgpack.pad_image(image), title, author[:15], picture=picture, record=rec,
+                        target=TARGETS[board])
 
 
 def main():
@@ -254,9 +274,10 @@ def main():
             picture = picture or site_shot(group, name, tmp)
             image = open(os.path.join(ROMS, group, f), "rb").read()
             sd = card_files(group, name)
+            board = rom_board(group, name)
             try:
                 data = package(image, title_of(name), group, picture,
-                               record(image, name, title_of(name), group, sd) if sd else None)
+                               record(image, name, title_of(name), group, sd) if sd else None, board)
             except ValueError as e:
                 print("skipped %s/%s: %s" % (group, f, e))
                 failed += 1
@@ -271,7 +292,7 @@ def main():
                 written.append(short)
             rom_time = os.path.getmtime(os.path.join(ROMS, group, f))
             os.utime(path, (rom_time, rom_time))
-            index.append("%-12s %-20s roms/%s/%s%s" % (short, title_of(name), group, f,
+            index.append("%-12s %-20s %-5s roms/%s/%s%s" % (short, title_of(name), board, group, f,
                          "".join("  + %s in the card's root" % p for p in sorted(sd))))
     # the menu's own files, beside the packages
     for fname, data in menu_files().items():
@@ -285,7 +306,8 @@ def main():
         if f.upper().endswith(".CHG") and f not in taken_files(index):
             os.remove(os.path.join(OUT, f))
             print("removed %s" % f)
-    text_index = ("CHG packages made by tools/make_chg.py from roms/: file, menu title, ROM\n"
+    text_index = ("CHG packages made by tools/make_chg.py from roms/: file, menu title, board, ROM\n"
+                  "A package is for one board: a bootloader installs only its own board's (rev1: Rev1 and Rev 1.5)\n"
                   "A game's card file (+ NAME.DAT) is in roms/sdcard/: it goes in the card's root, not in GAMES\n\n"
                   + "\n".join(index) + "\n")
     index_path = os.path.join(OUT, "INDEX.TXT")

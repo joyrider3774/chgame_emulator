@@ -244,8 +244,10 @@ static bool af_level(ChgMachine *m, int port, int pin)
     /* PA4 as SPI1's NSS, driven low while the SPI is on with SSOE */
     if (port == 0 && pin == 4)
         return !((m->spi.ctlr2 & 0x04) && (m->spi.ctlr1 & 0x40));
-    /* PB10 as TIM1 CH2: the buzzer. Its level at this instant */
-    if (port == 1 && pin == 10) {
+    /* the buzzer's pin on its timer channel (TIM1 CH2 on Rev0's PB10, TIM2
+       CH2 on Rev1's PA1). Its level at this instant */
+    const ChgPin bz = m->board->buzzer;
+    if (port == bz.port && pin == bz.pin) {
         const ChgBuzzState *b = &m->buzzer.cur;
         if (!b->pwm)
             return b->level;
@@ -267,37 +269,63 @@ bool gpio_pin(ChgMachine *m, int port, int pin)
     }
     if (g->ext_low >> pin & 1)
         return false;
+    /* a board resistor (4.7k) holds the pin high over the chip's weak pulls */
+    if (g->ext_high >> pin & 1)
+        return true;
     switch (cfg >> 2) {
     case 2: return (g->outdr >> pin) & 1;     /* pull up (1) or down (0) */
     default: return false;                    /* analog or floating */
     }
 }
 
-/* Which button each port pin is, from the board's wiring */
-static const struct { int port, pin; uint8_t btn; } button_pins[] = {
-    { 1, 4, CHG_BTN_UP }, { 2, 14, CHG_BTN_DOWN }, { 1, 3, CHG_BTN_LEFT }, { 2, 15, CHG_BTN_RIGHT },
-    { 1, 1, CHG_BTN_A }, { 1, 6, CHG_BTN_B }, { 1, 7, CHG_BTN_SELECT }, { 1, 8, CHG_BTN_START },
-};
-
+/* The buttons pull their pins (the board's) to GND. The G8U6 package bonds
+   PB1 and PB5 to one pin (16, the board package's Rev1 variant says so), so
+   a button there pulls both */
 void chg_set_buttons(ChgMachine *m, uint8_t buttons)
 {
     m->buttons = buttons;
     for (int p = 0; p < 3; p++) m->gpio[p].ext_low = 0;
-    for (size_t i = 0; i < sizeof(button_pins) / sizeof(button_pins[0]); i++)
-        if (buttons & button_pins[i].btn)
-            m->gpio[button_pins[i].port].ext_low |= 1u << button_pins[i].pin;
+    for (int i = 0; i < 8; i++) {
+        const ChgPin b = m->board->button[i];
+        if (!(buttons & (1u << i)) || chg_pin_none(b))
+            continue;
+        m->gpio[b.port].ext_low |= 1u << b.pin;
+        if (b.port == 1 && b.pin == 1)
+            m->gpio[1].ext_low |= 1u << 5;
+    }
+}
+
+void chg_set_board(ChgMachine *m, const ChgBoard *board)
+{
+    m->board = board ? board : chg_board_default();
+    for (int p = 0; p < 3; p++) m->gpio[p].ext_high = 0;
+    for (int i = 0; i < 4; i++) {
+        const ChgPin u = m->board->pull_up[i];
+        if (!chg_pin_none(u))
+            m->gpio[u.port].ext_high |= 1u << u.pin;
+    }
+    chg_set_buttons(m, m->buttons);
+}
+
+static inline bool board_pin(ChgMachine *m, ChgPin p)
+{
+    return gpio_pin(m, p.port, p.pin);
 }
 
 /* The pins other hardware watches; called whenever a port's outputs may have changed */
 static void gpio_changed(ChgMachine *m)
 {
-    const bool rst = gpio_pin(m, 1, 12);
+    const ChgBoard *b = m->board;
+    const bool rst = board_pin(m, b->lcd_rst);
     if (rst != m->lcd.rst_level) {
         m->lcd.rst_level = rst;
         if (!rst)
             st7735_reset(&m->lcd);
     }
-    m->led = gpio_pin(m, 1, 9);
+    /* a switched backlight is dark while its pin is low (Rev1's PB9 has a
+       pull-down on the board, so it is dark until a program drives it) */
+    m->lcd.backlight = chg_pin_none(b->lcd_bl) || board_pin(m, b->lcd_bl);
+    m->led = board_pin(m, b->led);
     buzzer_update(m);
 }
 
@@ -379,8 +407,8 @@ static uint8_t rev8(uint8_t b)
 static void spi_deliver(ChgMachine *m, uint16_t frame)
 {
     /* the display listens while its CS (PA4) is low and it is not in reset */
-    if (!gpio_pin(m, 0, 4) && m->lcd.rst_level) {
-        const bool dc = gpio_pin(m, 1, 0);
+    if (!board_pin(m, m->board->lcd_cs) && m->lcd.rst_level) {
+        const bool dc = board_pin(m, m->board->lcd_dc);
         if (m->spi.ctlr1 & SPI_DFF) {
             uint8_t hi = (uint8_t)(frame >> 8), lo = (uint8_t)frame;
             if (m->spi.ctlr1 & SPI_LSB) { uint8_t t = rev8(lo); lo = rev8(hi); hi = t; }
@@ -392,11 +420,11 @@ static void spi_deliver(ChgMachine *m, uint16_t frame)
             st7735_byte(&m->lcd, dc, b);
         }
     }
-    /* The microSD card answers on MISO while its CS (PB11) is low; otherwise
-       MISO floats high (the display never answers). A card that sees CS go
-       high drops what it was saying. */
+    /* The microSD card answers on MISO while its CS (Rev0's PB11, Rev1's
+       PB3) is low; otherwise MISO floats high (the display never answers).
+       A card that sees CS go high drops what it was saying. */
     uint16_t miso = (m->spi.ctlr1 & SPI_DFF) ? 0xffff : 0xff;
-    const bool sd_sel = !gpio_pin(m, 1, 11);
+    const bool sd_sel = !board_pin(m, m->board->sd_cs);
     if (sd_sel) {
         if (m->spi.ctlr1 & SPI_DFF) {
             const uint8_t hi = sdspi_xfer(&m->sdspi, m->sd, (uint8_t)(frame >> 8));
@@ -788,13 +816,13 @@ static void tim_write(ChgMachine *m, int n, uint32_t off, uint32_t v)
         t->cnt_base %= tim_period(t);
     pfic_set_line(m, tim_irq(n), (t->intfr & 1) && (t->dmaintenr & 1));
     tim_plan(m, n);
-    if (n == 0)
+    if (n == m->board->buzz_tim)
         buzzer_update(m);
     chg_kick(m);
 }
 
 /* ------------------------------------------------------------------------ */
-/* The buzzer on PB10                                                        */
+/* The buzzer: its pin as GPIO, or the board's timer channel driving it     */
 /* ------------------------------------------------------------------------ */
 
 void buzzer_update(ChgMachine *m)
@@ -803,14 +831,20 @@ void buzzer_update(ChgMachine *m)
     memset(&s, 0, sizeof(s));
     s.cycle = m->cycles;
 
-    const unsigned cfg = pin_cfg(m, 1, 10);
-    const bool remap = ((m->afio_pcfr1 >> 15) & 7) == 1;   /* TIM1 partial remap 1: CH2 on PB10 */
+    /* Rev0: TIM1 CH2 on PB10 with TIM1's partial remap 1. Rev1: TIM2 CH2 on
+       PA1, TIM2 not remapped. Both timers are advanced-control ones on this
+       chip, so the output also needs MOE (BDTR bit 15) */
+    const ChgBoard *bd = m->board;
+    const unsigned cfg = pin_cfg(m, bd->buzzer.port, bd->buzzer.pin);
+    const bool remap = ((m->afio_pcfr1 >> bd->buzz_remap_shift) & 7) == bd->buzz_remap;
     if ((cfg & 3) && (cfg & 8) && remap) {
-        const ChgTimer *t = &m->tim[0];
-        const bool enabled = (t->ccer & 0x10) && (t->bdtr & 0x8000);
-        const bool polarity = (t->ccer & 0x20) != 0;
-        const unsigned mode = (t->chctlr1 >> 12) & 7;
-        const uint32_t period = tim_period(t), ccr = t->ccr[1];
+        const ChgTimer *t = &m->tim[bd->buzz_tim];
+        const unsigned c = bd->buzz_ch - 1u;                    /* 0-3 */
+        const bool enabled = (t->ccer & (1u << (4 * c))) && (t->bdtr & 0x8000);
+        const bool polarity = (t->ccer & (2u << (4 * c))) != 0;
+        const uint16_t chctlr = c < 2 ? t->chctlr1 : t->chctlr2;
+        const unsigned mode = (chctlr >> ((c & 1) ? 12 : 4)) & 7;
+        const uint32_t period = tim_period(t), ccr = t->ccr[c];
         const uint32_t cnt = tim_count(m, t, m->cycles);
         if (!enabled) {
             s.level = 0;
@@ -833,7 +867,7 @@ void buzzer_update(ChgMachine *m)
             s.level = (uint8_t)(active != polarity);
         }
     } else {
-        s.level = (uint8_t)gpio_pin(m, 1, 10);
+        s.level = (uint8_t)board_pin(m, bd->buzzer);
     }
 
     ChgBuzzer *b = &m->buzzer;
@@ -1000,6 +1034,12 @@ static void adc_write(ChgMachine *m, uint32_t off, uint32_t v)
             m->adc[2] &= ~0x00400000u;
             m->adc_noise = (m->adc_noise * 1664525u + 1013904223u) ^ (uint32_t)m->cycles;
             m->adc[19] = 1800 + (m->adc_noise >> 22) % 400;
+            /* the first regular channel (RSQR3 SQ1): a board that feeds it a
+               voltage (Rev1's VBUS sense on channel 0) reads that */
+            const unsigned ch = m->adc[13] & 0x1f;
+            for (int i = 0; i < 2; i++)
+                if (m->board->analog[i].channel == ch)
+                    m->adc[19] = m->board->analog[i].code;
             m->adc[0] |= 2 | 0x10;      /* EOC, STRT */
             m->cycles += 50;
         }
@@ -1212,7 +1252,8 @@ void bus_reset(ChgMachine *m, bool power_on)
         /* every pin a floating input */
         m->gpio[p].cfg[0] = m->gpio[p].cfg[1] = m->gpio[p].cfg[2] = 0x44444444u;
     }
-    chg_set_buttons(m, m->buttons);
+    /* the board's pull-ups and the buttons held, on the cleared ports */
+    chg_set_board(m, m->board);
     m->afio_pcfr1 = m->afio_exticr[0] = m->afio_exticr[1] = m->afio_ctlr = 0;
     memset(m->rcc, 0, sizeof(m->rcc));
     m->rcc[0] = 0x00000083u;
@@ -1223,7 +1264,9 @@ void bus_reset(ChgMachine *m, bool power_on)
         m->tim[n].atrlr = 0xffff;
         m->tim[n].next_update = UINT64_MAX;
     }
-    m->tim[0].advanced = true;
+    /* TIM1 and, on the CH32X035, TIM2 are advanced-control timers (RM
+       chapter 12: break, dead time, MOE) */
+    m->tim[0].advanced = m->tim[1].advanced = true;
     memset(&m->flashctl, 0, sizeof(m->flashctl));
     m->flashctl.locked = m->flashctl.fast_locked = true;
     m->flashctl.actlr = 0;
@@ -1231,6 +1274,8 @@ void bus_reset(ChgMachine *m, bool power_on)
     memset(m->io, 0, sizeof(m->io));
     memset(m->usb, 0, sizeof(m->usb));
     m->lcd.rst_level = true;    /* the reset line is floating high until driven */
+    /* a switched backlight starts dark: its pin floats, held low on the board */
+    m->lcd.backlight = chg_pin_none(m->board->lcd_bl);
     memset(&m->buzzer.cur, 0, sizeof(m->buzzer.cur));
     m->buzzer.cur.cycle = m->cycles;
 }

@@ -11,6 +11,15 @@
  *   .chg   a game package for CHGame's SD menu bootloader ("CHG1": a
  *          512-byte header, then the .bin), checked as that bootloader
  *          checks it; its program goes to 0x3000 like a .bin
+ *   .chgame a cart (cart.c, CHGame's spec/chgame.md): one game of it (the
+ *          first, or chg_cart_game), its binary for the board at 0x3000,
+ *          its SD files into the card's folder (chg_cart_sd_folder)
+ *
+ * Which board it runs on (board.h): the one asked for (chg_board_choice,
+ * --board), else the one a CHG package is for (its target id), else the one
+ * a --bootloader image is for, else chg_board_fallback (the web page's
+ * board menu), else the newest. A .bin, .hex or .elf does not say which
+ * board it was built for.
  *
  * The save file sits beside the program as <name>.sav and holds every flash
  * page the program has written: a 4 byte address then 256 bytes, repeated.
@@ -21,11 +30,15 @@
 #include <ctype.h>
 #include "machine.h"
 #include "loader.h"
+#include "cart.h"
 
 #define CHGAME_META_ADDR 0xF700u
 
-extern const uint8_t chg_bootloader[];
-extern const size_t chg_bootloader_size;
+const ChgBoard *chg_board_choice;
+const ChgBoard *chg_board_fallback;
+const char *chg_cart_game;
+const char *chg_cart_sd_folder;
+int chg_cart_sd_written;
 
 static uint8_t *read_file(const char *path, size_t *size)
 {
@@ -159,12 +172,19 @@ static void put32(uint8_t *p, uint32_t v)
 /* the bootloader in use: the built-in one, or a file chg_set_bootloader read */
 static uint8_t *custom_boot;
 static size_t custom_boot_size;
+static const ChgBoard *custom_boot_board;
+
+const ChgBoard *chg_bootloader_board(void)
+{
+    return custom_boot ? custom_boot_board : NULL;
+}
 
 bool chg_set_bootloader(const char *path, char *err, size_t errlen)
 {
     free(custom_boot);
     custom_boot = NULL;
     custom_boot_size = 0;
+    custom_boot_board = NULL;
     if (!path) return true;
     size_t size;
     uint8_t *data = read_file(path, &size);
@@ -177,18 +197,31 @@ bool chg_set_bootloader(const char *path, char *err, size_t errlen)
     }
     custom_boot = data;
     custom_boot_size = size;
+    /* a bootloader is built for one board's pins, and since board package
+       0.4.0 says which at 0x14 (0 for rev0) */
+    custom_boot_board = chg_board_of_bootloader(data, size);
     return true;
+}
+
+/* The board a program without a board of its own runs on */
+static const ChgBoard *board_for(void)
+{
+    if (chg_board_choice) return chg_board_choice;
+    if (chg_bootloader_board()) return chg_bootloader_board();
+    if (chg_board_fallback) return chg_board_fallback;
+    return chg_board_default();
 }
 
 static void put_bootloader(ChgMachine *m)
 {
     memset(m->flash, 0xff, CHG_APP_START);
     if (custom_boot) memcpy(m->flash, custom_boot, custom_boot_size);
-    else memcpy(m->flash, chg_bootloader, chg_bootloader_size);
+    else memcpy(m->flash, m->board->bootloader, *m->board->bootloader_size);
 }
 
 void chg_load_bootloader_only(ChgMachine *m)
 {
+    chg_set_board(m, board_for());
     memset(m->flash, 0xff, sizeof(m->flash));
     memset(m->flash_dirty, 0, sizeof(m->flash_dirty));
     m->flash_written = false;
@@ -233,7 +266,7 @@ static void install_bootloader(ChgMachine *m, uint32_t length)
    order; the payload is returned in place */
 #define CHG_PKG_HEADER 512u
 static bool chg_package(const uint8_t *d, size_t size, const uint8_t **payload, uint32_t *n,
-                        char *err, size_t errlen)
+                        const ChgBoard **board, char *err, size_t errlen)
 {
     if (size < CHG_PKG_HEADER || rd32(d) != 0x31474843u) {                  /* "CHG1" */
         snprintf(err, errlen, "not a CHG package"); return false;
@@ -244,8 +277,24 @@ static bool chg_package(const uint8_t *d, size_t size, const uint8_t **payload, 
     if (rd16(d + 4) != 1 || rd16(d + 6) != CHG_PKG_HEADER) {
         snprintf(err, errlen, "CHG package format %u is not supported", rd16(d + 4)); return false;
     }
-    if (rd32(d + 8) != 0x35335843u || rd32(d + 12) != 0x003000F7u) {      /* "CX35", 0x3000 + 0xF700 */
-        snprintf(err, errlen, "this CHG package is not for the CHGame"); return false;
+    /* The board it is for (its target id) and the layout (0x3000 + 0xF700).
+       A bootloader installs only its own board's packages (the SD menu shows
+       ERROR 5 for another's), and so does the emulator for the board asked
+       for; without one it takes the package's board */
+    const uint32_t target = rd32(d + 8);
+    *board = chg_board_by_target(target);
+    if (!*board) {
+        snprintf(err, errlen, "this CHG package is for a board this emulator does not know (target %c%c%c%c)",
+                 d[8], d[9], d[10], d[11]);
+        return false;
+    }
+    if (chg_board_choice && *board != chg_board_choice) {
+        snprintf(err, errlen, "this CHG package is for %s, not %s (--board %s)",
+                 (*board)->title, chg_board_choice->title, chg_board_choice->name);
+        return false;
+    }
+    if (rd32(d + 12) != 0x003000F7u) {
+        snprintf(err, errlen, "this CHG package's layout is not the CHGame's"); return false;
     }
     *n = rd32(d + 16);
     if (!*n || *n > CHGAME_META_ADDR - CHG_APP_START || (*n & 3) || size < CHG_PKG_HEADER + *n) {
@@ -261,6 +310,63 @@ static bool chg_package(const uint8_t *d, size_t size, const uint8_t **payload, 
     return true;
 }
 
+/* A .chgame cart: the game's binary for the board at 0x3000, and its SD
+   files into the card's folder. The board is the one asked for (the cart
+   must have it), else the --bootloader image's, else the page's choice,
+   else the newest board the cart has a binary for: unlike a .bin, a cart
+   says which boards each binary is for */
+static bool load_cart(ChgMachine *m, const uint8_t *data, size_t size, uint32_t *length,
+                      const ChgBoard **board, char *err, size_t errlen)
+{
+    ChgCart *c = chg_cart_open(data, size, err, errlen);
+    if (!c) return false;
+    bool ok = false;
+    uint8_t *image = NULL;
+    const int game = chg_cart_find(c, chg_cart_game);
+    if (game < 0) {
+        size_t n = (size_t)snprintf(err, errlen, "the cart has no game %s; it has:", chg_cart_game);
+        for (int i = 0; i < chg_cart_games(c) && n < errlen; i++)
+            n += (size_t)snprintf(err + n, errlen - n, " %s", chg_cart_id(c, i));
+        goto out;
+    }
+    const ChgBoard *b = chg_board_choice;
+    if (!b) {
+        const ChgBoard *prefer[2] = { chg_bootloader_board(), chg_board_fallback };
+        for (int i = 0; i < 2 && !b; i++)
+            if (prefer[i] && chg_cart_has(c, game, prefer[i]->name)) b = prefer[i];
+        for (int i = chg_board_count - 1; i >= 0 && !b; i--)
+            if (chg_cart_has(c, game, chg_boards[i].name)) b = &chg_boards[i];
+    }
+    if (!b) {
+        char devs[128];
+        chg_cart_devices(c, game, devs, sizeof devs);
+        snprintf(err, errlen, "%s has no binary for a board this emulator knows (it has: %s)",
+                 chg_cart_title(c, game), devs[0] ? devs : "none");
+        goto out;
+    }
+    size_t len;
+    image = chg_cart_binary(c, game, b->name, &len, err, errlen);
+    if (!image) goto out;
+    if (len >= 12 && rd32(image + 8) == 0x4C424843u) {                      /* "CHBL" */
+        snprintf(err, errlen, "the cart's %s binary is a bootloader, not a program", b->name);
+        goto out;
+    }
+    if (!place(m, CHG_APP_START, image, len, err, errlen)) goto out;
+    *length = ((uint32_t)len + 3) & ~3u;
+    *board = b;
+    chg_cart_sd_written = 0;
+    if (chg_cart_sd_folder) {
+        const int n = chg_cart_write_sdcard(c, game, chg_cart_sd_folder, err, errlen);
+        if (n < 0) goto out;
+        chg_cart_sd_written = n;
+    }
+    ok = true;
+out:
+    free(image);
+    chg_cart_free(c);
+    return ok;
+}
+
 bool chg_load_program(ChgMachine *m, const char *path, char *err, size_t errlen)
 {
     size_t size;
@@ -273,11 +379,15 @@ bool chg_load_program(ChgMachine *m, const char *path, char *err, size_t errlen)
 
     bool ok;
     uint32_t lowest = CHG_APP_START, length = 0;
+    const ChgBoard *board = board_for();
+    chg_cart_sd_written = 0;
     if (size >= 4 && data[0] == 0x7f && data[1] == 'E' && data[2] == 'L' && data[3] == 'F') {
         ok = load_elf(m, data, size, &lowest, err, errlen);
+    } else if (chg_is_zip(data, size)) {
+        ok = load_cart(m, data, size, &length, &board, err, errlen);
     } else if (size >= 4 && rd32(data) == 0x31474843u) {
         const uint8_t *payload;
-        ok = chg_package(data, size, &payload, &length, err, errlen) &&
+        ok = chg_package(data, size, &payload, &length, &board, err, errlen) &&
              place(m, CHG_APP_START, payload, length, err, errlen);
     } else if (ends_with(path, ".hex")) {
         ok = load_hex(m, (const char *)data, &lowest, err, errlen);
@@ -290,6 +400,7 @@ bool chg_load_program(ChgMachine *m, const char *path, char *err, size_t errlen)
     }
     free(data);
     if (!ok) return false;
+    chg_set_board(m, board);
 
     if (lowest < CHG_APP_START) {
         /* a whole-flash image brings its own bootloader, or is not an

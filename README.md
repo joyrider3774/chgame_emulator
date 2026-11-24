@@ -17,6 +17,37 @@ This is an independent, unofficial piece of software, not affiliated with or
 endorsed by the makers of the CHGame. Where the emulator and the hardware
 disagree, the hardware is right and the emulator has a bug.
 
+## Boards
+
+The CHGame has had more than one board (hardware revision), with the same
+chip and memory map but the screen, card, buttons, buzzer and LED on other
+pins. A program built for one board does not run on another: on the wrong
+board it shows nothing, as on the real thing. The emulator does them all and
+emulates **Rev1** (also Rev 1.5, the same board for a program) unless told
+otherwise:
+
+| Board | `--board` | Target id | Display D/C | Card CS | Buttons U/D/L/R, A/B/SEL/START | Buzzer | LED | Backlight |
+|---|---|---|---|---|---|---|---|---|
+| CHGame Rev1, Rev 1.5 (default) | `rev1` | `CGR1` | PB4 | PB3 | PB0/PB1/PC3/PC0, PB11/PB6/PB7/PB8 | PA1, TIM2 CH2 | PB10 | switched, PB9 |
+| CHGame Rev0 | `rev0` | `CX35` | PB0 | PB11 | PB4/PC14/PB3/PC15, PB1/PB6/PB7/PB8 | PB10, TIM1 CH2 | PB9 | always on |
+
+Which board runs a program:
+
+1. `--board` when given. A `.chg` for another board is then refused, as the
+   bootloader refuses it (the SD menu's ERROR 5).
+2. Else the board a `.chg` package is for (its target id), the newest board a
+   `.chgame` cart has a build for, or the board a `--bootloader` image is for
+   (its board word at offset 0x14; 0 is Rev0).
+3. Else Rev1. A `.bin`, `.hex` or `.elf` does not say which board it was built
+   for: a Rev0 build needs `--board rev0`.
+
+Each board boots with its own bootloader, the board package's "USB Only"
+one (0.4.0), and the CHGame SD menu bootloaders are built per board too
+(`--bootloader` takes either board's). The web page has a Board menu and
+`?board=rev0`. A board is one entry in `src/board.c` (its pins, timer,
+target id and bootloader), so a later revision is added there, with its
+bootloader in `tools/make_bootloader_image.py`.
+
 ## What is emulated
 
 * **CPU** — RV32IMAC plus WCH's **XW** extension (the extra 16-bit `c.lbu`,
@@ -42,10 +73,13 @@ disagree, the hardware is right and the emulator has a bug.
   COLMOD 12/16/18 bit, inversion, sleep, display on/off, hardware reset on PB12.
   The glass shows the 128x128 block the board's own library addresses; a program
   with the wrong offsets or rotation looks wrong here the way it would on the panel.
-* **Buzzer** on PB10 — driven by GPIO or by TIM1 CH2 PWM (partial remap). The pin
-  is integrated exactly over every audio sample, so tones come out clean at any
-  frequency.
-* **LED** on PB9, shown in the status bar.
+  On Rev1 the glass stays dark until the program lights the backlight (PB9).
+* **Buzzer** — driven by GPIO or by its timer's PWM: TIM1 CH2 on Rev0's PB10
+  (partial remap), TIM2 CH2 on Rev1's PA1. The pin is integrated exactly over
+  every audio sample, so tones come out clean at any frequency.
+* **LED** (PB9 on Rev0, PB10 on Rev1), shown in the status bar.
+* **Rev1's board parts** — the 4.7k pull-ups on CN2's I2C lines, and VBUS sense
+  on PA0 reading 0 V (no USB cable: nothing enumerates here).
 * **Saves** — flash pages a game writes are kept in `<game>.sav` beside it.
 
 * **The bootloader** — programs start the way a CHGame starts them: the real
@@ -55,7 +89,8 @@ disagree, the hardware is right and the emulator has a bug.
   the image's CRC and jumps to it. `--no-bootloader` starts at 0x3000 instead.
 
 * **The microSD card** — an SDHC card in SPI mode on SPI1 with its chip select
-  on PB11, sharing the bus with the display as on the board (`src/sdspi.c`).
+  on PB11 (Rev0) or PB3 (Rev1), sharing the bus with the display as on the
+  board (`src/sdspi.c`).
   Reads, writes, multi-block streaming over DMA. CHStlView, CHSpriteView and
   FileBrowser run with it.
   
@@ -94,8 +129,11 @@ Programs load from:
 * **Open file…** — a file on this computer
 * the **URL box**, or `CHGame_Emulator.html?rom=https://…/game.bin`
 * `CHGame_Emulator.html?rom=game.bin` — a file in the same folder as the page
-* a `games.json` beside the page (`["blips.bin", {"file": "znax.bin", "name": "Znax"}]`)
-  fills a Games menu
+* a `games.json` beside the page (`["blips.bin", {"file": "znax.bin", "name": "Znax", "board": "rev0"}]`)
+  fills a Games menu; an entry's `board` picks the board it runs on
+
+The Board menu (or `?board=rev0`) sets the board for a `.bin`, `.hex` or
+`.elf`; a `.chg` brings its own.
 
 Saves go to the browser's IndexedDB.
 
@@ -113,10 +151,17 @@ or drop a file on the window, or press F3.
 CHGame_Emulator [program] [options]
 ```
 
-The program is a `.bin`, `.hex`, `.elf` or `.chg` (a CHG package for the SD menu).
+The program is a `.bin`, `.hex`, `.elf`, `.chg` (a CHG package for the SD menu)
+or `.chgame` (a cart, CHGame's sharing format: a ZIP holding a game's build
+for each board, its card files and pictures). A cart's game runs with its
+build for the board, and its card files are copied onto the card folder
+(not onto a card image), replacing older copies, as a card prepared from the
+cart would have them. `--game id` picks one game of a cart with several.
 
 | Option | What it does |
 |---|---|
+| `--board rev1\|rev0` | the board to emulate (see *Boards*): `rev1` (also `rev1.5`) or `rev0`. Default: the board a `.chg`, a `.chgame` or a `--bootloader` image is for, else `rev1` |
+| `--game id` | which game of a `.chgame` cart to run (default: its first) |
 | `--bootloader file.bin` | another bootloader instead of the built-in one, e.g. one of CHGame's SD menus (`tools/build_bootloaders.sh` builds them into `bootloaders/`); without a program the flash starts erased |
 | `--no-bootloader` | start the program at 0x3000, no bootloader |
 | `--sd folder\|card.img` | the microSD card: a folder (made into a FAT32 card) or a card image (default: the `sdcard` folder next to the emulator) |

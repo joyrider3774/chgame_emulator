@@ -680,6 +680,12 @@ void sdcard_close(SdCard *c)
 {
     if (!c) return;
     sdcard_sync(c);
+    sdcard_discard(c);
+}
+
+void sdcard_discard(SdCard *c)
+{
+    if (!c) return;
     if (c->f) fclose(c->f);
     free(c->mem);
     for (int i = 0; i < c->nfiles; i++) free(c->files[i]);

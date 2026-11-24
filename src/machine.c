@@ -14,6 +14,7 @@
 void chg_init(ChgMachine *m)
 {
     memset(m, 0, sizeof(*m));
+    m->board = chg_board_default();
     memset(m->flash, 0xff, sizeof(m->flash));
     m->entry = CHG_APP_START;
     st7735_power_on(&m->lcd);

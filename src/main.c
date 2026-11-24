@@ -51,11 +51,13 @@ static const char *help_text[] = {
     "F11, Alt+Enter   fullscreen",
     "Esc              quit",
     "",
-    "Drop a .bin, .chg, .hex or .elf on the window",
+    "Drop a .bin, .chg, .chgame, .hex or .elf on the window",
     "microSD: the folder sdcard next to the emulator,",
     "  or --sd folder|card.img (made if missing)",
     "--bootloader file.bin: another bootloader at 0x0000;",
     "  without a program it starts alone (SD game menu)",
+    "--board rev0|rev1: the board (a .chg says its own;",
+    "  default the newest, Rev1 / Rev 1.5)",
 };
 
 /* What the F9 overlay shows, measured over the last second */
@@ -289,9 +291,28 @@ static bool load_program(App *app, const char *path)
     write_save(app);
     insert_sd(app);
     sync_sd(app);
+    /* A .chgame's SD files go onto the card: into its folder, which the
+       card is then read from again, as after putting files on a real card.
+       An image card is left alone (the message says so) */
+    const char *dot = SDL_strrchr(app->sd_path, '.');
+    const char *slash = SDL_strrchr(app->sd_path, '/');
+    const char *bslash = SDL_strrchr(app->sd_path, '\\');
+    if (bslash > slash) slash = bslash;
+    const bool sd_folder = app->sd_path[0] && (!dot || (slash && dot < slash));
+    chg_cart_sd_folder = sd_folder ? app->sd_path : NULL;
     if (!chg_load_program(app->m, path, err, sizeof err)) {
         show_message(app, "%s", err);
         return false;
+    }
+    if (chg_cart_sd_written > 0 && app->m->sd) {
+        /* synced just above: closing would sync again and put the card's
+           older copies of the cart's files back */
+        sdcard_discard(app->m->sd);
+        app->m->sd = NULL;
+#ifdef __EMSCRIPTEN__
+        EM_ASM(FS.syncfs(false, function(err) {}););
+#endif
+        insert_sd(app);
     }
     SDL_strlcpy(app->program, path, sizeof app->program);
 #ifdef __EMSCRIPTEN__
@@ -317,9 +338,9 @@ static bool load_program(App *app, const char *path)
     if (bname > name) name = bname;
     name = name ? name + 1 : path;
     char title[512];
-    SDL_snprintf(title, sizeof title, "CHGame Emulator - %s", name);
+    SDL_snprintf(title, sizeof title, "CHGame Emulator - %s (%s)", name, app->m->board->title);
     SDL_SetWindowTitle(app->window, title);
-    show_message(app, "%s", name);
+    show_message(app, "%s on %s", name, app->m->board->title);
     return true;
 }
 
@@ -343,8 +364,10 @@ static bool boot_bootloader_only(App *app, const char *boot_path)
     if (app->audio_stream) SDL_ClearAudioStream(app->audio_stream);
     app->loaded = true;
     app->paused = false;
-    SDL_SetWindowTitle(app->window, "CHGame Emulator - bootloader");
-    show_message(app, "Bootloader");
+    char title[256];
+    SDL_snprintf(title, sizeof title, "CHGame Emulator - bootloader (%s)", app->m->board->title);
+    SDL_SetWindowTitle(app->window, title);
+    show_message(app, "Bootloader on %s", app->m->board->title);
     return true;
 }
 
@@ -368,6 +391,18 @@ static App *web_app;
 EMSCRIPTEN_KEEPALIVE int chg_web_load(const char *path)
 {
     return web_app && load_program(web_app, path);
+}
+
+/* The board for the programs the page loads next that do not say which
+   they are for (a .bin; a .chg names its own): "rev0", "rev1", or "" for
+   the newest. 0 for a name the emulator does not know */
+EMSCRIPTEN_KEEPALIVE int chg_web_set_board(const char *name)
+{
+    if (!name || !*name) { chg_board_fallback = NULL; return 1; }
+    const ChgBoard *b = chg_board_find(name);
+    if (!b) return 0;
+    chg_board_fallback = b;
+    return 1;
 }
 
 /* The page changed the files in /sdcard: the card comes out (what the program
@@ -432,7 +467,7 @@ static void open_dialog(App *app)
     EM_ASM(document.getElementById('file').click(););
 #else
     static const SDL_DialogFileFilter filters[] = {
-        { "CHGame programs", "bin;chg;hex;elf" },
+        { "CHGame programs", "bin;chg;chgame;hex;elf" },
         { "All files", "*" },
     };
     SDL_ShowOpenFileDialog(file_chosen, app, app->window, filters, 2, NULL, false);
@@ -657,8 +692,16 @@ static uint8_t gamepad_buttons(App *app)
 static const char usage_text[] =
     "CHGame_Emulator [program] [options]\n"
     "\n"
-    "program: a .bin, .hex, .elf or .chg (or drop one on the window, or F3)\n"
+    "program: a .bin, .hex, .elf, .chg or .chgame cart (or drop one on the\n"
+    "window, or F3). A cart's game runs with its card files put on the card\n"
     "\n"
+    "  --board rev1|rev0       the CHGame board (hardware revision) to emulate:\n"
+    "                          rev1 (also Rev 1.5) or rev0. Default: the one a\n"
+    "                          .chg or a --bootloader image is for, the newest a\n"
+    "                          .chgame has a build for, else the newest (rev1).\n"
+    "                          A .bin built for one board does not run on the\n"
+    "                          other\n"
+    "  --game id               which game of a .chgame cart (default its first)\n"
     "  --bootloader file.bin   another bootloader, e.g. one of CHGame's SD menus;\n"
     "                          without a program it starts with an empty flash\n"
     "  --no-bootloader         start the program at 0x3000, no bootloader\n"
@@ -771,6 +814,16 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         else if (!SDL_strcmp(argv[i], "--integer-scale")) app->integer_scale = true;
         else if (!SDL_strcmp(argv[i], "--no-integer-scale")) app->integer_scale = false;
         else if (!SDL_strcmp(argv[i], "--scale") && i + 1 < argc) i++;     /* read above, before the window */
+        else if (!SDL_strcmp(argv[i], "--game") && i + 1 < argc) chg_cart_game = argv[++i];
+        else if (!SDL_strcmp(argv[i], "--board") && i + 1 < argc) {
+            chg_board_choice = chg_board_find(argv[++i]);
+            if (!chg_board_choice) {
+                char list[256];
+                chg_board_list(list, sizeof list);
+                SDL_Log("unknown board %s; the boards are %s", argv[i], list);
+                show_message(app, "Unknown board %s", argv[i]);
+            }
+        }
         else if (argv[i][0] != '-' && !program) program = argv[i];
     }
     set_scale_mode(app);
@@ -975,6 +1028,7 @@ static void draw_stats(App *app, int w)
     SDL_snprintf(lines[n++], 64, "host   %5.1f%% cpu  max %.1fx", st->host_load, st->max_speed);
     SDL_snprintf(lines[n++], 64, "render %5.1f fps", st->render_fps);
     SDL_snprintf(lines[n++], 64, "pc     %08X", m->cpu.pc);
+    SDL_snprintf(lines[n++], 64, "board  %s", m->board->title);
     SDL_Renderer *r = app->renderer;
     float bw = 0;
     for (int i = 0; i < n; i++) bw = SDL_max(bw, (float)SDL_strlen(lines[i]) * 8);

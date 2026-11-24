@@ -18,6 +18,10 @@ typedef struct SdCard SdCard;
    created, formatted FAT32 at size_mb (0: the default, 256 MB). */
 SdCard  *sdcard_open(const char *path, uint32_t size_mb, char *err, size_t errlen);
 void     sdcard_close(SdCard *c);           /* syncs first */
+/* Without syncing: for a folder card whose folder changed underneath it
+   (a cart's SD files written in) after it was synced, where a sync would
+   put the card's older copies back */
+void     sdcard_discard(SdCard *c);
 uint64_t sdcard_sectors(const SdCard *c);
 bool     sdcard_read(SdCard *c, uint64_t lba, uint8_t *buf, uint32_t count);
 bool     sdcard_write(SdCard *c, uint64_t lba, const uint8_t *buf, uint32_t count);

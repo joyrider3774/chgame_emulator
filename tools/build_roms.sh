@@ -4,7 +4,8 @@
 # (~/.arduinoIDE/arduino-cli.yaml): the board package and the sketchbook's
 # libraries are the IDE's.
 #
-# The board package is bateske/CHGame's released one (0.3.0 on, board rev0,
+# The board package is bateske/CHGame's released one (0.4.0 on, which knows
+# the boards Rev0 and Rev1,
 # https://github.com/bateske/CHGame/releases/latest/download/package_chgame_index.json),
 # which carries the libraries CHGfx (with its examples), CHSd and CHGame,
 # whose examples are the twenty casino games (examples/Games/<Name>) and the
@@ -27,8 +28,14 @@
 # script never deletes ROMs outside joyrider3774/ and chgfx/, and make_chg.py
 # and the games site take everything in roms/.
 #
-# Each project is built with the board settings its README asks for.
-# Usage: tools/build_roms.sh [jobs]      (default 4 builds at once)
+# Each project is built with the board settings its README asks for, for one
+# board (hardware revision): the newest, rev1 (CHGame Rev1 and Rev 1.5), or
+# the one CHGAME_BOARD names (CHGAME_BOARD=rev0 for the first boards). A
+# program does not say which board it was built for, and one built for a
+# board does not run on another, so every ROM gets <name>.board beside it
+# ("rev1"), which make_chg.py, tools/make_web.sh and the games site read
+# (a ROM without one is taken as rev0, what everything was before Rev1).
+# Usage: [CHGAME_BOARD=rev0] tools/build_roms.sh [jobs]      (default 4 builds at once)
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 # Git Bash on Windows, or Linux. WSL counts as Linux: a Linux arduino-cli and
@@ -54,7 +61,8 @@ PYTHON=$(command -v python || command -v python3)
 OUT="$HERE/roms"
 WORK="$HERE/build/roms"
 JOBS=${1:-4}
-BOARD=CHGame:ch32v:rev0
+CHGAME_BOARD=${CHGAME_BOARD:-rev1}
+BOARD=CHGame:ch32v:$CHGAME_BOARD
 
 winpath() { cygpath -w "$1" 2>/dev/null || echo "$1"; }
 
@@ -156,6 +164,10 @@ done
 for d in "$CHGFX" "$CHGAMELIB" "$CHSDLIB" "$CHGAMES" "$CHAPPS"; do
     [ -d "$d" ] || { echo "not found: $d (CHGame board package 0.3.0 or later not installed, or reorganised?)"; exit 1; }
 done
+# and the board must be one the installed package knows (rev1 needs 0.4.0)
+grep -q "^$CHGAME_BOARD\.name=" "${PKG%/}/boards.txt" 2>/dev/null ||
+    { echo "the installed CHGame board package ($(basename "${PKG%/}")) has no board $CHGAME_BOARD"; exit 1; }
+echo "board: $CHGAME_BOARD"
 
 # FileBrowser uses Arduino's SD library, which stops at "#error Architecture
 # or board not supported" on the CH32. A copy in the build folder gets the
@@ -221,6 +233,19 @@ for g in "$GITHUB"/*_embedded; do
     fi
 done
 
+# CHGame's board test (CHBoardTest: buttons, LED, backlight, buzzer, card,
+# VBUS ...), one of the web emulator's games. The board package does not
+# ship it (it is in CHGame's tools/sketches), so it is taken from the CHGame
+# clone at the installed package's release tag, and built like the games
+# below with its own tools/game.py
+PKGVER=$(basename "${PKG%/}")
+BOARDTEST="$WORK/src/CHBoardTest"
+rm -rf "$BOARDTEST"
+mkdir -p "$WORK/src"
+git -C "$CHGAME" fetch -q --tags upstream 2>/dev/null || git -C "$CHGAME" fetch -q --tags 2>/dev/null
+git -C "$CHGAME" archive "v$PKGVER" tools/sketches/CHBoardTest 2>/dev/null | tar -x -C "$WORK/src" --strip-components=2 ||
+    echo "not found: CHBoardTest at v$PKGVER in $CHGAME"
+
 # group|name|sketch folder|board options|defines
 {
     # bateske/CHGame's games and apps (CHSDtoUSB, CHSDtoSerial, CHStlView),
@@ -228,7 +253,8 @@ done
     # the C library's nano variant to fit, no USB serial; unless the sketch's
     # own tools/game.py names a board (FQBN, CHSDtoUSB and CHSDtoSerial need USB
     # serial) or defines (DEFINES, CHSDtoSerial's GFX_CHUNK_ROWS=1)
-    for g in "$CHGAMES"/*/ "$CHAPPS"/*/; do
+    for g in "$CHGAMES"/*/ "$CHAPPS"/*/ "$BOARDTEST"/; do
+        [ -f "$g/$(basename "$g").ino" ] || continue
         "$PYTHON" - "$g" <<'PY'
 import ast, os, re, sys
 g, group = sys.argv[1], "bateske"
@@ -236,7 +262,8 @@ opts, defines = "opt=oslto,rtlib=nano,periph=game,usb=uploadonly", ""
 cfg = os.path.join(g, "tools", "game.py")
 if os.path.exists(cfg):
     text = open(cfg, encoding="utf-8").read()
-    m = re.search(r'^FQBN\s*=\s*"CHGame:ch32v:rev0:([^"]*)"', text, re.M)
+    # its menu options; the board in it is the one this run builds for
+    m = re.search(r'^FQBN\s*=\s*"CHGame:ch32v:rev[0-9]+:([^"]*)"', text, re.M)
     if m:
         opts = m.group(1)
     m = re.search(r'^DEFINES\s*=\s*(\[.*?\])', text, re.M | re.S)
@@ -251,7 +278,10 @@ PY
     # CHSpriteView is filmote's: bateske/CHSpriteView is a modified copy of it
     # ("CHSpriteViewMOD"). Cloned into filmote/: the folder must be named like the .ino
     echo "filmote|CHSpriteView|$GITHUB/filmote/CHSpriteView|opt=o2std|"
-    echo "bateske|CH32Doom|$GITHUB/CH32Doom|opt=osstd|"
+    # CH32Doom drives the panel, the buttons and the buzzer by register on
+    # Rev0's pins (CH32Doom.ino), so a build for a later board runs dark:
+    # it is built for rev0 whatever the run's board (the sixth field)
+    echo "bateske|CH32Doom|$GITHUB/CH32Doom|opt=osstd||rev0"
     echo "bateske|FileBrowser|$GITHUB/FileBrowser|opt=osstd|"
     echo "poevoid|CHGame-Ponglike|$GITHUB/CHGame-Ponglike|opt=osstd|"
     # the BunnyMark port (c:/github/bunnymark_ports, the AKA version is beside it)
@@ -279,7 +309,7 @@ if os.path.exists(script):
         m = re.match(r'\s*\("CHGame",\s*"([^"]*)",\s*(\{.*?\})\s*\)', line)
         if m:
             targets.append((m.group(1), eval(m.group(2), {"__builtins__": {}})))
-        m = re.search(r'"fqbn":\s*"CHGame:ch32v:(?:CHGame|rev0):([^"]*)"', line)
+        m = re.search(r'"fqbn":\s*"CHGame:ch32v:(?:CHGame|rev[0-9]+):([^"]*)"', line)
         if m:
             opts = m.group(1)
 if not targets:
@@ -292,13 +322,15 @@ PY
 } > "$WORK/list.txt"
 
 build_one() {
-    IFS='|' read -r group name sketch opts defines <<EOF
+    # board: the run's (CHGAME_BOARD) unless the entry names its own
+    IFS='|' read -r group name sketch opts defines board <<EOF
 $1
 EOF
+    board=${board:-$CHGAME_BOARD}
     bp="$WORK/$group/$name"
     log="$bp.log"
     mkdir -p "$bp" "$OUT/$group"
-    set -- --config-file "$(winpath "$CONFIG")" compile --fqbn "$BOARD:$opts" --build-path "$(winpath "$bp")"
+    set -- --config-file "$(winpath "$CONFIG")" compile --fqbn "CHGame:ch32v:$board:$opts" --build-path "$(winpath "$bp")"
     if [ -n "$SDLIB_OPT" ]; then
         set -- "$@" --library "$(winpath "$SDLIB_OPT")"
     fi
@@ -321,15 +353,17 @@ EOF
         { rm -f "$bp"/libraries/*/*.a; "$CLI" "$@" "$sketch" > "$log" 2>&1; }; then
         bin=$(ls "$bp"/*.ino.bin 2>/dev/null | head -1)
         cp "$bin" "$OUT/$group/$name.bin"
+        # the board it was built for (a .bin does not say)
+        echo "$board" > "$OUT/$group/$name.board"
         size=$(grep -o "Sketch uses [0-9]* bytes" "$log" | grep -o "[0-9]*")
-        echo "ok      $group/$name.bin  ($size bytes)"
+        echo "ok      $group/$name.bin  ($size bytes, $board)"
         # a log is kept only for a build that failed
         rm -f "$log"
     else
         echo "FAILED  $group/$name  - $(grep -iE "error|overflow" "$log" | head -1 | cut -c1-150)"
     fi
 }
-export CLI CONFIG GITHUB WORK OUT BOARD CHGFX CHGAMELIB CHSDLIB
+export CLI CONFIG GITHUB WORK OUT BOARD CHGAME_BOARD CHGFX CHGAMELIB CHSDLIB
 
 # arduino-cli does not like several instances filling its caches at once on
 # a first run, so one build goes first and the rest follow in parallel
@@ -347,7 +381,7 @@ for gdir in "$OUT"/joyrider3774 "$OUT"/chgfx; do
     for f in "$gdir"/*.bin; do
         [ -f "$f" ] || continue
         grep -q "^$group|$(basename "$f" .bin)|" "$WORK/list.txt" ||
-            { rm -f "$f"; echo "removed $group/$(basename "$f")"; }
+            { rm -f "$f" "${f%.bin}.board"; echo "removed $group/$(basename "$f")"; }
     done
     for d in "$WORK/$group"/*/; do
         [ -d "$d" ] || continue
@@ -355,6 +389,58 @@ for gdir in "$OUT"/joyrider3774 "$OUT"/chgfx; do
         grep -q "^$group|$name|" "$WORK/list.txt" || rm -rf "$d" "$WORK/$group/$name.log"
     done
 done
+
+# CHBoardTest as a .chgame cart (CHGame's spec/chgame.md) with its build for
+# every board the installed package has: the web emulator lists the cart once
+# per board (web/games.json), since a board test is wanted for whichever board
+# is in hand. Made with CHGame's own cart tool at the package's release tag
+# (git archive, the clone's checkout is left alone), which asks arduino-cli
+# which boards are installed. The sketch has no chgame.json (it is not on the
+# casino card), so its details are written here, from its README
+if [ -f "$BOARDTEST/CHBoardTest.ino" ]; then
+    CART="$WORK/cart"
+    rm -rf "$CART"
+    mkdir -p "$CART/tools" "$CART/stage"
+    git -C "$CHGAME" archive "v$PKGVER" tools spec platform/board/arduino/CHGame/libraries | tar -x -C "$CART/tools"
+    ST="$CART/stage/CHBoardTest"
+    cp -r "$BOARDTEST" "$ST"
+    git -C "$CHGAME" show "v$PKGVER:tools/LICENSE" > "$ST/LICENSE"
+    git -C "$CHGAME" show "v$PKGVER:tools/NOTICE" > "$ST/NOTICE"
+    cat > "$ST/chgame.json" <<'JSON'
+{
+  "id": "chboardtest",
+  "title": "BOARD TEST",
+  "author": "bateske",
+  "genre": "Tool",
+  "license": "Apache-2.0",
+  "licenseFiles": ["LICENSE", "NOTICE"],
+  "description": "One screen that checks a CHGame board: the eight buttons, the LED, the backlight, the buzzer, the SD card, VBUS sense, CN3, CN2, the test pads and the core's fault handler.",
+  "url": "https://github.com/bateske/CHGame",
+  "sourceUrl": "https://github.com/bateske/CHGame/tree/main/tools/sketches/CHBoardTest"
+}
+JSON
+    opts=$(sed -n 's/^FQBN *= *"CHGame:ch32v:rev[0-9]*:\(.*\)"/\1/p' "$BOARDTEST/tools/game.py")
+    ok=1
+    for b in $(sed -n 's/^\(rev[0-9]*\)\.name=.*/\1/p' "${PKG%/}/boards.txt"); do
+        mkdir -p "$ST/build/$b/release"
+        if "$CLI" --config-file "$(winpath "$CONFIG")" compile --fqbn "CHGame:ch32v:$b:${opts:-opt=oslto,rtlib=nano,periph=game,usb=uploadonly}" \
+                --build-path "$(winpath "$CART/build_$b")" --library "$(winpath "$CHGFX")" --library "$(winpath "$CHGAMELIB")" \
+                --library "$(winpath "$CHSDLIB")" "$(winpath "$BOARDTEST")" > "$CART/build_$b.log" 2>&1; then
+            cp "$CART/build_$b/CHBoardTest.ino.bin" "$ST/build/$b/release/"
+        else
+            ok=0
+            echo "FAILED  bateske/CHBoardTest.chgame  - the $b build: $(grep -iE "error" "$CART/build_$b.log" | head -1 | cut -c1-150)"
+        fi
+    done
+    # without this run's CHGAME_BOARD, which CHGame's tools also read: with it set they
+    # would put that one board's build in the cart
+    if [ $ok = 1 ] && env -u CHGAME_BOARD PATH="$(dirname "$CLI"):$PATH" "$PYTHON" "$CART/tools/tools/chgame.py" cart new \
+            "$(winpath "$OUT/bateske/CHBoardTest.chgame")" "$(winpath "$ST")" --no-build > "$CART/cart.log" 2>&1; then
+        echo "ok      bateske/CHBoardTest.chgame  ($(wc -c < "$OUT/bateske/CHBoardTest.chgame") bytes, $(ls "$ST/build" | tr '\n' ' '| sed 's/ $//'))"
+    elif [ $ok = 1 ]; then
+        echo "FAILED  bateske/CHBoardTest.chgame  - $(tail -1 "$CART/cart.log")"
+    fi
+fi
 
 # and every ROM as a CHG package for the SD menu bootloader, in chg/
 GITHUB_DIR="$(winpath "$GITHUB")" "$PYTHON" "$HERE/tools/make_chg.py"

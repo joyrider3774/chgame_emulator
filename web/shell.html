@@ -32,9 +32,13 @@
 <body>
 <header>
   <strong>CHGame Emulator</strong>
-  <label class="button">Open file…<input id="file" type="file" accept=".bin,.chg,.hex,.elf"></label>
+  <label class="button">Open file…<input id="file" type="file" accept=".bin,.chg,.chgame,.hex,.elf"></label>
   <select id="games" hidden><option value="">Games…</option></select>
-  <input id="url" type="url" placeholder="or a URL to a .bin / .chg / .hex / .elf">
+  <select id="board" title="The CHGame board to emulate for a .bin, .hex or .elf (a .chg says its own). A program built for one board does not run on the other">
+    <option value="rev1">Rev1 / Rev 1.5</option>
+    <option value="rev0">Rev0</option>
+  </select>
+  <input id="url" type="url" placeholder="or a URL to a .bin / .chg / .chgame / .hex / .elf">
   <button id="load">Load</button>
 </header>
 <header>
@@ -52,7 +56,10 @@
 <p class="keys">Programs load from a file on this computer, from a URL, or with
   <code>?rom=name.bin</code> from the folder the emulator is in
   (<code>?rom=https://…</code> works for any address that allows it).
-  A <code>games.json</code> beside the page — a list of file names — fills the Games menu.</p>
+  A <code>games.json</code> beside the page — a list of file names — fills the Games menu.
+  The Board menu (or <code>?board=rev0</code>) picks the CHGame board for a <code>.bin</code>: Rev1 / Rev 1.5,
+  the newest, or Rev0. A program built for one board does not run on the other; a <code>.chg</code> names its
+  own board.</p>
 <p class="keys"><code>?sd=card.zip</code> or <code>?sd=card.img</code> (beside the page or a full URL) fills the
   microSD card from a zip file or a card image, once: the card then keeps what programs write to it until
   the file changes. Without <code>?sd=</code>, a <code>sdcard.zip</code> or <code>sdcard.img</code> beside the page
@@ -65,9 +72,18 @@
 
   function setStatus(t) { statusEl.textContent = t; }
 
+  // The board a program that does not name one runs on (a .bin; a .chg
+  // names its own): the Board menu, set from ?board= or a games.json entry
+  var boardSel = document.getElementById('board');
+  var boardParam = (new URLSearchParams(location.search).get('board') || '').toLowerCase();
+  if (boardParam === 'rev1.5' || boardParam === 'rev15') boardParam = 'rev1';
+  if (boardParam) boardSel.value = boardParam;
+  if (!boardSel.value) boardSel.value = 'rev1';
+
   // Hands a program to the emulator once it and the saves are ready
   function start(name, bytes) {
     if (!ready) { pending = [name, bytes]; return; }
+    Module.ccall('chg_web_set_board', 'number', ['string'], [boardSel.value]);
     try { FS.mkdir('/roms'); } catch (e) {}
     var path = '/roms/' + name.replace(/[\/\\?#]/g, '_');
     FS.writeFile(path, bytes);
@@ -332,14 +348,23 @@
   fetch('games.json').then(function (r) { return r.ok ? r.json() : []; }).then(function (list) {
     if (!Array.isArray(list) || !list.length) return;
     var sel = document.getElementById('games');
+    // an entry may name the board it runs on: {"file", "name", "board": "rev0"}; for a
+    // .chgame, which holds a build for each board, that picks its build, so one cart can
+    // be listed once per board
     list.forEach(function (g) {
       var o = document.createElement('option');
       o.value = typeof g === 'string' ? g : g.file;
       o.textContent = typeof g === 'string' ? g : (g.name || g.file);
+      if (typeof g !== 'string' && g.board) o.dataset.board = g.board;
       sel.appendChild(o);
     });
     sel.hidden = false;
-    sel.addEventListener('change', function () { if (sel.value) loadUrl(sel.value); });
+    sel.addEventListener('change', function () {
+      if (!sel.value) return;
+      var o = sel.options[sel.selectedIndex];
+      if (o.dataset.board) boardSel.value = o.dataset.board;
+      loadUrl(sel.value);
+    });
   }).catch(function () {});
 
   var rom = new URLSearchParams(location.search).get('rom');

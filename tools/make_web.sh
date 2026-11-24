@@ -103,9 +103,16 @@ for g in games:
     dst = os.path.join("build_web", src)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     shutil.copy2(src, dst)
-if not missing:
-    shutil.copy2("web/games.json", "build_web/games.json")
-elif len(missing) < len(games):
+    # the board the ROM was built for, as build_roms.sh wrote it beside it
+    # (<name>.board): the page runs the game on that board. Without one the
+    # entry's own "board", else rev0, what every ROM was before Rev1
+    # (a .chgame holds a build for every board: there the entry's own "board" picks
+    # one, so a cart can be listed once per board)
+    board = os.path.splitext(src)[0] + ".board"
+    if os.path.isfile(board) and not src.lower().endswith(".chgame"):
+        g["board"] = open(board).read().strip()
+    g.setdefault("board", "rev0")
+if len(missing) < len(games):
     with open("build_web/games.json", "w", newline="\n") as f:
         json.dump([g for g in games if g["file"] not in missing], f, indent=1)
 print("%d games in build_web/games.json%s" % (len(games) - len(missing),

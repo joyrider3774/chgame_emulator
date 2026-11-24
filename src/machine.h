@@ -1,13 +1,18 @@
 /*
  * The CHGame as a whole: a WCH CH32X035G8U6 (QingKe V4C RISC-V core, 48 MHz,
- * 62 KB flash, 20 KB SRAM) and what is wired to its pins.
+ * 62 KB flash, 20 KB SRAM) and what is wired to its pins, which depends on
+ * the board (board.h: the machine's `board`):
  *
- *   ST7735S 128x128  SPI1 (SCK PA5, MOSI PA7), CS PA4, D/C PB0, RESET PB12
- *   buttons          UP PB4, DOWN PC14, LEFT PB3, RIGHT PC15,
- *                    A PB1, B PB6, SELECT PB7, START PB8 - all to GND
- *   buzzer           PB10 (TIM1 CH2 with the partial remap, or plain GPIO)
- *   LED              PB9, active high
- *   microSD          SPI1, CS PB11 (sdspi.c: an SDHC card in SPI mode)
+ *                    Rev0                        Rev1 / Rev 1.5
+ *   ST7735S 128x128  SPI1 (SCK PA5, MOSI PA7), CS PA4, RESET PB12, and
+ *                    D/C PB0                     D/C PB4, backlight PB9
+ *   buttons          UP PB4, DOWN PC14,          UP PB0, DOWN PB1,
+ *                    LEFT PB3, RIGHT PC15,       LEFT PC3, RIGHT PC0,
+ *                    A PB1, B PB6,               A PB11, B PB6,
+ *                    SELECT PB7, START PB8       SELECT PB7, START PB8 (all to GND)
+ *   buzzer           PB10, TIM1 CH2 (remap 1)    PA1, TIM2 CH2 (no remap), or GPIO
+ *   LED              PB9, active high            PB10, active high
+ *   microSD          SPI1, CS PB11               SPI1, CS PB3 (sdspi.c: an SDHC card in SPI mode)
  *
  * Every module keeps its state in here so a machine is one plain struct that
  * can be reset, and later snapshotted, as a unit.
@@ -16,6 +21,7 @@
 #define CHG_MACHINE_H
 
 #include "sdspi.h"
+#include "board.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -124,6 +130,7 @@ typedef struct {
     uint32_t outdr;
     uint32_t lckr;
     uint32_t ext_low;       /* pins something outside pulls low (buttons) */
+    uint32_t ext_high;      /* pins the board pulls up (Rev1's I2C lines) */
 } ChgGpioPort;
 
 /* ------------------------------------------------------------------------ */
@@ -164,7 +171,7 @@ typedef struct {
     uint32_t cnt_base;      /* counter at cycle_base */
     uint64_t cycle_base;
     uint64_t next_update;   /* UINT64_MAX while no update interrupt is due */
-    bool     advanced;      /* TIM1: outputs need MOE */
+    bool     advanced;      /* TIM1, TIM2: outputs need MOE */
 } ChgTimer;
 
 /* ------------------------------------------------------------------------ */
@@ -179,7 +186,7 @@ typedef struct {
 } ChgFlashCtl;
 
 /* ------------------------------------------------------------------------ */
-/* Buzzer: what drives PB10, logged with timestamps for the audio side       */
+/* Buzzer: what drives its pin, logged with timestamps for the audio side    */
 /* ------------------------------------------------------------------------ */
 
 typedef struct {
@@ -224,7 +231,11 @@ typedef struct {
     uint16_t tfa, vsa, bfa;     /* SCRLAR: top fixed, scrolling and bottom fixed lines */
     uint16_t ssa;               /* VSCSAD: the line shown first after the top fixed area */
     bool     rst_level;
-    uint32_t frames_written;    /* times the address counter wrapped a whole window */
+    /* the backlight: false keeps the glass dark whatever the controller
+       shows. Not the controller's, so a reset leaves it alone; the board's
+       pin sets it (always lit on a board without a switch) */
+    bool     backlight;
+    uint32_t frames_written;   /* times the address counter wrapped a whole window */
     uint32_t frame_starts;      /* times a RAMWR window went back up the screen: a new frame */
     uint16_t last_ys;
 } ChgSt7735;
@@ -239,6 +250,11 @@ enum {
 };
 
 typedef struct ChgMachine {
+    /* the board: which pins the display, the card, the buttons, the buzzer
+       and the LED are on, and its bootloader. Set before a program is loaded
+       (chg_set_board, or the loader from a CHG package or a bootloader
+       image), kept over resets */
+    const ChgBoard *board;
     uint64_t cycles;
     uint64_t instret;       /* instructions retired, for the stats */
     uint64_t stop_at;       /* the CPU returns once cycles reaches this */
@@ -296,6 +312,8 @@ void     chg_init(ChgMachine *m);
 void     chg_reset(ChgMachine *m, bool power_on);
 void     chg_run(ChgMachine *m, uint64_t until);
 void     chg_set_buttons(ChgMachine *m, uint8_t buttons);
+/* Which board the machine is; the next reset brings it up as that board */
+void     chg_set_board(ChgMachine *m, const ChgBoard *board);
 void     chg_schedule(ChgMachine *m);
 static inline void chg_kick(ChgMachine *m) { m->stop_at = 0; }
 

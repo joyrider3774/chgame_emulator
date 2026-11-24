@@ -2,6 +2,7 @@
  * Runs a program with no window: for testing and for measuring speed.
  *
  *   chg_headless game.bin [seconds] [out.ppm] [--press BTN@sec[:dur]]...
+ *                [--board rev0|rev1] ...
  *
  * Prints how fast the emulation ran against real time and writes what the
  * screen shows at the end as a PPM.
@@ -75,7 +76,8 @@ int main(int argc, char **argv)
     if (argc < 2) {
         fprintf(stderr, "usage: chg_headless game.bin|- [seconds] [out.ppm] [--press btn@sec[:dur]]... "
                         "[--shots prefix] [--gif out.gif] [--save] [--sd folder|card.img]\n"
-                        "                    [--bootloader boot.bin] [--back sec]...\n"
+                        "                    [--bootloader boot.bin] [--back sec]... [--board rev0|rev1]\n"
+                        "                    [--game id]   (game.chgame: which of the cart's games)\n"
                         "       chg_headless --sd-make card.img [folder] [MB]\n"
                         "  - for the program: the bootloader alone, program flash erased (an SD menu\n"
                         "  bootloader installs from the card); --back: F4, back to the bootloader\n");
@@ -91,6 +93,27 @@ int main(int argc, char **argv)
             chg_use_bootloader = false;
         else if (!strcmp(argv[i], "--bootloader") && i + 1 < argc)
             bootloader = argv[++i];
+        else if (!strcmp(argv[i], "--game") && i + 1 < argc)
+            chg_cart_game = argv[++i];      /* a cart's game, by id */
+        else if (!strcmp(argv[i], "--sd") && i + 1 < argc) {
+            /* a card folder also takes a cart's SD files: the card is made
+               from it after the program is loaded. An image file does not */
+            const char *sd = argv[++i];
+            const char *dot = strrchr(sd, '.'), *sl = strrchr(sd, '/'), *bs = strrchr(sd, '\\');
+            if (bs > sl) sl = bs;
+            if (!dot || (sl && dot < sl)) chg_cart_sd_folder = sd;
+        }
+        else if (!strcmp(argv[i], "--board") && i + 1 < argc) {
+            /* the board to emulate; without it the program decides (a CHG
+               package's or a cart's board, a bootloader's), else the newest */
+            chg_board_choice = chg_board_find(argv[++i]);
+            if (!chg_board_choice) {
+                char list[256];
+                chg_board_list(list, sizeof list);
+                fprintf(stderr, "unknown board %s; the boards are %s\n", argv[i], list);
+                return 2;
+            }
+        }
     }
     if (bootloader && !chg_set_bootloader(bootloader, err, sizeof err)) {
         fprintf(stderr, "%s\n", err);
@@ -138,7 +161,8 @@ int main(int argc, char **argv)
             i += 2;
         } else if (!strcmp(argv[i], "--no-bootloader")) {
             /* handled before loading */
-        } else if (!strcmp(argv[i], "--bootloader") && i + 1 < argc) {
+        } else if ((!strcmp(argv[i], "--bootloader") || !strcmp(argv[i], "--board") || !strcmp(argv[i], "--game")) &&
+                   i + 1 < argc) {
             i++;    /* handled before loading */
         } else if (!strcmp(argv[i], "--back") && i + 1 < argc) {
             /* F4 in the front end: back to the bootloader at that time */
@@ -260,8 +284,9 @@ int main(int argc, char **argv)
            seconds, wall, seconds / wall, seconds * CHG_HCLK / wall / 1e6);
     printf("game %.1f fps (LCD frame starts)  guest %.2f MIPS (%.2f cycles/instr)\n",
            m.lcd.frame_starts / seconds, m.instret / seconds / 1e6, (double)m.cycles / (double)m.instret);
-    printf("pc %08x  frames written %u  display %s  led %d  audio peak %.3f\n", m.cpu.pc,
-           m.lcd.frames_written, m.lcd.display_on ? "on" : "off", m.led, peak);
+    printf("pc %08x  frames written %u  display %s%s  led %d  audio peak %.3f  board %s\n", m.cpu.pc,
+           m.lcd.frames_written, m.lcd.display_on ? "on" : "off", m.lcd.backlight ? "" : " (backlight off)",
+           m.led, peak, m.board->name);
     if (m.cpu.faulted)
         printf("FAULT: mcause %u at %08x mtval %08x\n", m.cpu.fault_cause, m.cpu.fault_pc, m.cpu.fault_tval);
     if (getenv("CHG_REGS")) {

@@ -285,6 +285,12 @@ static inline uint32_t c8(uint32_t v) { return v << 2 | v >> 4; }
 /* The glass as it looks now, 128x128 XRGB8888, top left first */
 void st7735_render(const ChgSt7735 *lcd, uint32_t out[128 * 128])
 {
+    /* without its backlight (Rev1's is switched) the glass shows nothing,
+       whatever the controller drives */
+    if (!lcd->backlight) {
+        for (int i = 0; i < 128 * 128; i++) out[i] = 0;
+        return;
+    }
     /* a normally white panel with nothing driving it: asleep, display off
        ("blank page inserted", 10.1.18), held in reset, and partial mode's
        non-display area (white on the device) */
